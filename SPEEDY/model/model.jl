@@ -88,7 +88,7 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     particle_dump_time = [-1]
     obs_noise_std::T = 1000.0
     #Path to the the local speedy directory
-    SPEEDY::String = "/Users/dangiles/Documents/UCL/Raddish/speedy"
+    SPEEDY::String = ""
     station_filename::String = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt")
     nature_dir::String = joinpath(SPEEDY, "DATA", "nature")
     # Output folders
@@ -413,11 +413,11 @@ ParticleDA.get_n_state_var(d::ModelData) = d.model_params.n_state_var
 function create_folders(output_folder::String, anal_folder::String, gues_folder::String, nprt_per_rank::Int, my_rank::Integer)
     MPI.Init()
     comm = MPI.COMM_WORLD
-    ens = joinpath(output_folder, "DATA", "ensemble")
-    tmp = joinpath(output_folder, "DATA", "tmp", "ensfcst")
+    data = joinpath(output_folder, "DATA")
+    ens = joinpath(data, "ensemble")
+    tmp = joinpath(data, "tmp", "ensfcst")
     if MPI.Comm_rank(comm) == 0
-        rm(ens; recursive=true)
-        rm(tmp; recursive=true)
+        rm(data; recursive=true)
         mkdir(ens)
         mkdir(tmp)
         mkdir(anal_folder)
