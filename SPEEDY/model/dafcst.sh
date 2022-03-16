@@ -14,8 +14,8 @@ particle=$6
 
 TMPDIR=$2/DATA/tmp
 OUTPUT=$2/DATA/ensemble
-echo "Updating ensemble member $6 on rank $5"
-cd $TMPDIR/ensfcst
+# echo "Updating ensemble member $6 on rank $5"
+cd $TMPDIR
 
 # Create directory for this process
 rm -rf $rank

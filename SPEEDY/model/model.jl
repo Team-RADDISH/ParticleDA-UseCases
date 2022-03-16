@@ -42,6 +42,7 @@ Parameters for the model. Keyword arguments:
 * `output_folder::String` : Output folder
 * `station_filename::String` : Path to the station file which defines the observation locations
 * `nature_dir::String`: Path to the directory with the ouputs of the nature run
+* `observed_indices::Vector`: Vector containing the indices of the observed values in the state vector
 * `nlon::Int`: Number of points in the longitude direction
 * `nlat::Int`: Number of points in the latitude direction
 * `lon_length::AbstractFloat`: Domain size in the lon direction
@@ -95,8 +96,8 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     output_folder::String = joinpath(pwd())
     guess_folder::String = joinpath(output_folder, "DATA", "ensemble", "gues")
     anal_folder::String = joinpath(output_folder, "DATA", "ensemble", "anal")
-    # Assimilated indices
-    assimilate_indices::Vector{Int} = [1,5]
+    # Observed indices
+    observed_indices::Vector{Int} = [1,5]
     # Grid dimensions
     nlon::Int = 96
     nlat::Int = 48
@@ -336,20 +337,6 @@ function set_initial_state!(states::StateVectors, model_matrices::SPEEDY.Matrice
         dummy_date = step_ens(params.ensDate, params.Hinc)
         read_grd!(@view(states.particles[:,:,:,:,ip]), joinpath(params.nature_dir, dummy_date * ".grd"), params.nlon, params.nlat, params.nlev)
     end
-
-    # Create generator for the initial random field
-    # x,y,z = get_axes(params)
-    # initial_grf = init_gaussian_random_field_generator(params.lambda_initial_state,
-    #                                                    params.nu_initial_state,
-    #                                                    params.sigma_initial_state,
-    #                                                    x,
-    #                                                    y,
-    #                                                    params.padding,
-    #                                                    params.primes)
-    # Add samples of the initial random field to all particles
-    # add_random_field!(states.particles, field_buffer, initial_grf, rng, (params.n_2d + params.n_3d), nprt_per_rank)
-
-
 end
 
 # Set station locations.
@@ -397,7 +384,7 @@ ParticleDA.get_obs_noise_std(d::ModelData) = d.model_params.obs_noise_std
 ParticleDA.get_model_noise_params(d::ModelData) = Matern(d.model_params.lambda[1],
                                                          d.model_params.nu[1],
                                                          σ=d.model_params.sigma[1])
-ParticleDA.get_indices(d::ModelData) = d.model_params.assimilate_indices                                    
+ParticleDA.get_observed_state_indices(d::ModelData) = d.model_params.observed_indices                                 
 
 function ParticleDA.set_particles!(d::ModelData, particles::AbstractArray{T}) where T
 
@@ -415,9 +402,10 @@ function create_folders(output_folder::String, anal_folder::String, gues_folder:
     comm = MPI.COMM_WORLD
     data = joinpath(output_folder, "DATA")
     ens = joinpath(data, "ensemble")
-    tmp = joinpath(data, "tmp", "ensfcst")
+    tmp = joinpath(data, "tmp")
     if MPI.Comm_rank(comm) == 0
         rm(data; recursive=true)
+        mkdir(data)
         mkdir(ens)
         mkdir(tmp)
         mkdir(anal_folder)
@@ -543,7 +531,7 @@ function ParticleDA.update_truth!(d::ModelData, _)
     read_ps!(@view(d.states.truth[:,:,1]), joinpath(d.model_params.nature_dir, d.dates[1] * ".grd"), d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Get observation from nature run
     get_obs!(d.observations.truth, d.states.truth[:,:,1], d.stations.ist, d.stations.jst, d.model_params)
-    add_noise!(d.observations.truth, d.rng[1], d.model_params)
+    # add_noise!(d.observations.truth, d.rng[1], d.model_params)
     return d.observations.truth
 end
 
@@ -557,6 +545,19 @@ function speedy_update!(SPEEDY::String,
     forecast = joinpath(@__DIR__, "dafcst.sh")
     # Bash script call to speedy
     run(`$forecast $SPEEDY $output $YMDH $TYMDH $rank $particle`)
+end
+
+function ParticleDA.sample_observations_given_particles(d::ModelData, nprt_per_rank)
+    indices = d.model_params.observed_indices
+    for ip in 1:nprt_per_rank
+        get_obs!(@view(d.observations.model[:,ip]),
+                 @view(d.states.particles[:, :, indices..., ip]),
+                 d.stations.ist,
+                 d.stations.jst,
+                 d.model_params)
+        add_noise!(@view(d.observations.model[:,ip]), d.rng[threadid()], d.model_params)
+    end
+    return d.observations.model
 end
 
 function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
@@ -573,10 +574,9 @@ function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
         read_grd!(@view(d.states.particles[:, :, :, :, ip]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
         # Check by plotting output
     end
-    @show maximum(abs.(d.states.particles[:, :, 1, 5, 1]-d.states.particles[:, :, 1, 5, 3]))
     ## Update the time strings
     d.dates[1],d.dates[2] = step_datetime(d.dates[1],d.dates[2])
-    @show d.dates[1], d.dates[2]
+    # @show d.dates[1], d.dates[2]
 end
 
 function ParticleDA.update_particle_noise!(d::ModelData, nprt_per_rank)
@@ -591,10 +591,11 @@ function ParticleDA.update_particle_noise!(d::ModelData, nprt_per_rank)
 end
 
 function ParticleDA.get_particle_observations!(d::ModelData, nprt_per_rank)
+    indices = d.model_params.observed_indices
     # get observations
     for ip in 1:nprt_per_rank
         get_obs!(@view(d.observations.model[:,ip]),
-                 @view(d.states.particles[:, :, 1, 5, ip]),
+                 @view(d.states.particles[:, :, indices...,  ip]),
                  d.stations.ist,
                  d.stations.jst,
                  d.model_params)
