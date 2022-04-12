@@ -13,4 +13,4 @@ Pkg.instantiate()
 # Include the sample model source code and load it
 include(module_src)
 using .Model
-run_particle_filter(Model.init, input_file, BootstrapFilter())
+run_particle_filter(Model.init, input_file, OptimalFilter())

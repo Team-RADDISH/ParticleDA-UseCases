@@ -67,13 +67,13 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     # Number of obs stations
     nobs::Int = 50
 
-    lambda::Vector{T} = [1.0e0, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
-    nu::Vector{T} = [2.5, 2.5, 2.5, 2.5, 2.5]
-    sigma::Vector{T} = [0.1, 0.1, 0.1, 0.00001, 1000.0]
+    lambda::Vector{T} = [1.0e0]#, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
+    nu::Vector{T} = [2.5]#, 2.5, 2.5, 2.5, 2.5]
+    sigma::Vector{T} = [1000.0]#[0.1, 0.1, 0.1, 0.00001, 1000.0]
 
-    lambda_initial_state::Vector{T} = [1.0e0, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
-    nu_initial_state::Vector{T} = [2.5, 2.5, 2.5, 2.5, 2.5]
-    sigma_initial_state::Vector{T} = [0.1, 0.1, 0.1, 0.0001, 1000.0]
+    lambda_initial_state::Vector{T} = [1.0e0]#, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
+    nu_initial_state::Vector{T} = [2.5]#, 2.5, 2.5, 2.5, 2.5]
+    sigma_initial_state::Vector{T} = [1000.0]#[0.1, 0.1, 0.1, 0.0001, 1000.0]
     
     padding::Int = 100
     primes::Bool = true
@@ -85,7 +85,7 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     title_grid::String = "grid"
     title_stations::String = "stations"
     title_params::String = "params"
-    particle_dump_file = "particle_dump.h5"
+    particle_dump_file::String = "particle_dump.h5"
     particle_dump_time = [-1]
     obs_noise_std::T = 1000.0
     #Path to the the local speedy directory
@@ -196,8 +196,8 @@ end
 
 @name @description @unit struct StateVectors{T<:AbstractArray, S<:AbstractArray}
 
-    particles::T | ("u","v","T","q","ps","rain") | ("velocity x-component","velocity y-component","Temperature", "Specific Humidity", "Pressure", "Rain") | ("m/s","m/s","K","kg/kg","Pa","mm/hr")
-    truth::S | ("ps") | ("Pressure") | ("kPa")
+    particles::T | ("u","v","T","q","ps","rain") | ("velocity x-component","velocity y-component","Temperature", "Specific Humidity", "Pressure", "Rain") | ("m/s","m/s","K","kg/kg","hPa","mm/hr")
+    truth::S | ("ps") | ("Pressure") | ("hPa")
 
 end
 
@@ -264,16 +264,16 @@ function add_random_field!(state::AbstractArray{T},
                            nprt::Int) where T
 
     Threads.@threads for ip in 1:nprt
-        for ivar in 1:n_3d
-            # Adding model noise to the 3D fields (U,V,T,q)
-            for lev in 1:nlev
-                sample_gaussian_random_field!(@view(field_buffer[:, :, lev, ivar, threadid()]), generators[ivar], rng[threadid()])
-            end
-        end
-        state[:, :, :, 1:n_3d, ip] .+= @view(field_buffer[:, :, :, 1:n_3d, threadid()])
+        # for ivar in 1:n_3d
+        #     # Adding model noise to the 3D fields (U,V,T,q)
+        #     for lev in 1:nlev
+        #         sample_gaussian_random_field!(@view(field_buffer[:, :, lev, ivar, threadid()]), generators[ivar], rng[threadid()])
+        #     end
+        # end
+        # state[:, :, :, 1:n_3d, ip] .+= @view(field_buffer[:, :, :, 1:n_3d, threadid()])
         # Adding model noise to the surface pressure field
-        # sample_gaussian_random_field!(@view(field_buffer[:, :, 1, 5, threadid()]), generators[5], rng[threadid()])
-        # state[:, :, 1, 5, ip] .+= @view(field_buffer[:, :, 1, 5, threadid()])
+        sample_gaussian_random_field!(@view(field_buffer[:, :, 1, 5, threadid()]), generators[1], rng[threadid()])
+        state[:, :, 1, 5, ip] .+= @view(field_buffer[:, :, 1, 5, threadid()])
     end
 
 end
@@ -352,10 +352,10 @@ function set_stations!(ist::AbstractVector, jst::AbstractVector, filename::Strin
         readline(f)
         ind = 0
         for line in eachline(f)
-            if ind%10 == 0
-                append!(ist, parse(Int64,split(line)[1]))
-                append!(jst, parse(Int64,split(line)[2]))
-            end
+            # if ind%10 == 0
+            append!(ist, parse(Int64,split(line)[1]))
+            append!(jst, parse(Int64,split(line)[2]))
+            # end
             ind = ind + 1
         end
     end
@@ -412,18 +412,16 @@ function create_folders(output_folder::String, anal_folder::String, gues_folder:
         mkdir(gues_folder)
     end
     MPI.Barrier(comm)
-
+    rank_tmp = joinpath(tmp,string(my_rank))
     rank_anal = joinpath(anal_folder,string(my_rank))
     rank_gues = joinpath(gues_folder,string(my_rank))
-    rank_tmp = joinpath(tmp,string(my_rank))
     mkdir(rank_tmp)
     mkdir(rank_anal)
     mkdir(rank_gues)
     Threads.@threads for ip in 1:nprt_per_rank
-        part_anal = joinpath(rank_anal, string(ip))
-        part_gues = joinpath(rank_gues, string(ip))
-        mkdir(part_anal)
-        mkdir(part_gues)
+        mkdir(joinpath(rank_anal, string(ip)))
+        mkdir(joinpath(rank_gues, string(ip)))
+        mkdir(joinpath(rank_tmp, string(ip)))
     end
 end
 
@@ -531,7 +529,7 @@ function ParticleDA.update_truth!(d::ModelData, _)
     read_ps!(@view(d.states.truth[:,:,1]), joinpath(d.model_params.nature_dir, d.dates[1] * ".grd"), d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Get observation from nature run
     get_obs!(d.observations.truth, d.states.truth[:,:,1], d.stations.ist, d.stations.jst, d.model_params)
-    # add_noise!(d.observations.truth, d.rng[1], d.model_params)
+    add_noise!(d.observations.truth, d.rng[1], d.model_params)
     return d.observations.truth
 end
 
@@ -562,7 +560,6 @@ end
 
 function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
     my_rank = MPI.Comm_rank(MPI.COMM_WORLD)
-
     Threads.@threads for ip in 1:nprt_per_rank
         #Write to file
         anal_file = joinpath(d.model_params.anal_folder, string(my_rank), string(ip), d.dates[1] * ".grd")
@@ -572,7 +569,9 @@ function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
         # Read back in the data and update the states
         guess_file = joinpath(d.model_params.guess_folder, string(my_rank), string(ip), d.dates[2] * ".grd")
         read_grd!(@view(d.states.particles[:, :, :, :, ip]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
-        # Check by plotting output
+        # Remove old files
+        rm(anal_file)
+        rm(guess_file)
     end
     ## Update the time strings
     d.dates[1],d.dates[2] = step_datetime(d.dates[1],d.dates[2])
@@ -753,7 +752,7 @@ function write_particles(output_filename::AbstractString,
                          d::ModelData) where T
 
     println("Writing particle states at timestep = ", it)
-    nprt = size(states.particles,4)
+    nprt = size(states.particles,5)
 
     h5open(output_filename, "cw") do file
 
@@ -762,7 +761,7 @@ function write_particles(output_filename::AbstractString,
 
             for (i,(name,desc,unit)) in enumerate(zip(name(states, :particles), description(states, :particles), unit(states, :particles)))
 
-                write_field(file, @view(states.particles[:,:,i,iprt]), it, unit, group_name, name, desc, d)
+                write_field(file, @view(states.particles[:,:,:,i,iprt]), it, unit, group_name, name, desc, d)
 
             end
 

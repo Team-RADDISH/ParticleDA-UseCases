@@ -1,10 +1,10 @@
 filter:
-  nprt: 12
+  nprt: 512
   weight_std: 1000.0
   verbose: true
   enable_timers: true
-  output_filename: "results/speedy_opt.h5"
-  n_time_step: 241
+  output_filename: ""
+  n_time_step: 120
 model:
   speedy:
     nlon: 96
@@ -12,6 +12,15 @@ model:
     IDate: "1982010100"
     dtDate: "1982010106"
     ensDate: "1991120100"
-    nobs: 50
-    obs_network: "uniform"
-    obs_noise_std: 1000.0
+    nobs: 416
+    obs_network: "real"
+    obs_noise_std: 100.0
+    SPEEDY: ""
+    lambda: 1.0
+    nu: 2.5
+    sigma: 1000.0
+    particle_dump_time: [120]
+    lambda_initial_state: 1.0
+    nu_initial_state: 2.5
+    sigma_initial_state: 1000.0
+    particle_dump_file: ""

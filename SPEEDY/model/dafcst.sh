@@ -15,14 +15,11 @@ particle=$6
 TMPDIR=$2/DATA/tmp
 OUTPUT=$2/DATA/ensemble
 # echo "Updating ensemble member $6 on rank $5"
-cd $TMPDIR
+cd ${TMPDIR}/${rank}
 
 # Create directory for this process
-rm -rf $rank
-mkdir ${rank}
-mkdir ${rank}/${particle}
-cd ${rank}
-# cp $SPEEDY/DATA/tmp/letkf/ensfcst/imp $MEM
+rm -rf ${particle}
+mkdir ${particle}
 cp $SPEEDY/DATA/nature/imp $particle
 # Set up boundary files
 SB=$SPEEDY/model/data/bc/t30/clim
