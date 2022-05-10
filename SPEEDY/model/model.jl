@@ -258,7 +258,7 @@ end
 function add_random_field!(state::AbstractArray{T},
                            field_buffer::AbstractArray{T},
                            generators::Vector{<:RandomField},
-                           rng::AbstractVector{<:Random.AbstractRNG},
+                           rng::Random.AbstractRNG,
                            n_3d::Int,
                            nlev::Int,                       
                            nprt::Int) where T
@@ -267,12 +267,12 @@ function add_random_field!(state::AbstractArray{T},
         # for ivar in 1:n_3d
         #     # Adding model noise to the 3D fields (U,V,T,q)
         #     for lev in 1:nlev
-        #         sample_gaussian_random_field!(@view(field_buffer[:, :, lev, ivar, threadid()]), generators[ivar], rng[threadid()])
+        #         sample_gaussian_random_field!(@view(field_buffer[:, :, lev, ivar, threadid()]), generators[ivar], rng)
         #     end
         # end
         # state[:, :, :, 1:n_3d, ip] .+= @view(field_buffer[:, :, :, 1:n_3d, threadid()])
         # Adding model noise to the surface pressure field
-        sample_gaussian_random_field!(@view(field_buffer[:, :, 1, 5, threadid()]), generators[1], rng[threadid()])
+        sample_gaussian_random_field!(@view(field_buffer[:, :, 1, 5, threadid()]), generators[1], rng)
         state[:, :, 1, 5, ip] .+= @view(field_buffer[:, :, 1, 5, threadid()])
     end
 
@@ -325,7 +325,7 @@ end
 
 function set_initial_state!(states::StateVectors, model_matrices::SPEEDY.Matrices,
                             field_buffer::AbstractArray{T},
-                            rng::AbstractVector{<:Random.AbstractRNG},
+                            rng::Random.AbstractRNG,
                             nprt_per_rank::Int,
                             params::ModelParameters) where T
 
@@ -425,7 +425,7 @@ function create_folders(output_folder::String, anal_folder::String, gues_folder:
     end
 end
 
-function init(model_params_dict::Dict, nprt_per_rank::Int, my_rank::Integer, rng::Vector{<:Random.AbstractRNG})
+function init(model_params_dict::Dict, nprt_per_rank::Int, my_rank::Integer, rng::Random.AbstractRNG)
     model_params = ParticleDA.get_params(ModelParameters, get(model_params_dict, "speedy", Dict()))
     states, observations, stations, field_buffer = init_arrays(model_params, nprt_per_rank)
     background_grf = init_gaussian_random_field_generator(model_params)
@@ -529,7 +529,7 @@ function ParticleDA.update_truth!(d::ModelData, _)
     read_ps!(@view(d.states.truth[:,:,1]), joinpath(d.model_params.nature_dir, d.dates[1] * ".grd"), d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Get observation from nature run
     get_obs!(d.observations.truth, d.states.truth[:,:,1], d.stations.ist, d.stations.jst, d.model_params)
-    add_noise!(d.observations.truth, d.rng[1], d.model_params)
+    add_noise!(d.observations.truth, d.rng, d.model_params)
     return d.observations.truth
 end
 
@@ -545,17 +545,14 @@ function speedy_update!(SPEEDY::String,
     run(`$forecast $SPEEDY $output $YMDH $TYMDH $rank $particle`)
 end
 
-function ParticleDA.sample_observations_given_particles(d::ModelData, nprt_per_rank)
+function ParticleDA.sample_observations_given_particles!(simulated_observations::AbstractMatrix, d::ModelData, nprt_per_rank)
+    @assert size(simulated_observations) == (d.model_params.nobs, nprt_per_rank)
     indices = d.model_params.observed_indices
     for ip in 1:nprt_per_rank
-        get_obs!(@view(d.observations.model[:,ip]),
-                 @view(d.states.particles[:, :, indices..., ip]),
-                 d.stations.ist,
-                 d.stations.jst,
-                 d.model_params)
-        add_noise!(@view(d.observations.model[:,ip]), d.rng[threadid()], d.model_params)
+        get_obs!(@view(simulated_observations[:, ip]), @view(d.states.particles[:, :, indices..., ip]), d.stations.ist, d.stations.jst, d.model_params)
+        add_noise!(@view(simulated_observations[:, ip]), d.rng, d.model_params)
     end
-    return d.observations.model
+    return simulated_observations
 end
 
 function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
