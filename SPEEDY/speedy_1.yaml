@@ -1,10 +1,9 @@
 filter:
-  nprt: 512
-  weight_std: 1000.0
+  nprt: 2
   verbose: true
   enable_timers: true
-  output_filename: ""
-  n_time_step: 120
+  output_filename: "results/test.h5"
+  n_time_step: 2
 model:
   speedy:
     nlon: 96
@@ -14,13 +13,16 @@ model:
     ensDate: "1991120100"
     nobs: 416
     obs_network: "real"
-    obs_noise_std: 100.0
+    obs_noise_std: [500.0]
     SPEEDY: ""
-    lambda: 1.0
-    nu: 2.5
-    sigma: 1000.0
-    particle_dump_time: [120]
-    lambda_initial_state: 1.0
-    nu_initial_state: 2.5
-    sigma_initial_state: 1000.0
-    particle_dump_file: ""
+    lambda: [1.0]
+    nu: [2.5]
+    sigma: [1000.0]
+    particle_dump_time: [60]
+    lambda_initial_state: [1.0]
+    nu_initial_state: [2.5]
+    sigma_initial_state: [1000.0]
+    particle_dump_file: "results/particles.h5"
+
+    observed_indices: [33]
+    n_assimilated_var: 1

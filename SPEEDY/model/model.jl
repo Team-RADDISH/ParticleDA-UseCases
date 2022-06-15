@@ -67,13 +67,13 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     # Number of obs stations
     nobs::Int = 50
 
-    lambda::Vector{T} = [1.0e0]#, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
-    nu::Vector{T} = [2.5]#, 2.5, 2.5, 2.5, 2.5]
-    sigma::Vector{T} = [1000.0]#[0.1, 0.1, 0.1, 0.00001, 1000.0]
+    lambda::Vector{T} = [1.0e0, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
+    nu::Vector{T} = [2.5, 2.5, 2.5, 2.5, 2.5]
+    sigma::Vector{T} = [0.1, 0.1, 0.1, 0.00001, 1000.0]
 
-    lambda_initial_state::Vector{T} = [1.0e0]#, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
-    nu_initial_state::Vector{T} = [2.5]#, 2.5, 2.5, 2.5, 2.5]
-    sigma_initial_state::Vector{T} = [1000.0]#[0.1, 0.1, 0.1, 0.0001, 1000.0]
+    lambda_initial_state::Vector{T} = [1.0e0, 1.0e0, 1.0e0, 1.0e0, 1.0e0]
+    nu_initial_state::Vector{T} = [2.5, 2.5, 2.5, 2.5, 2.5]
+    sigma_initial_state::Vector{T} = [0.1, 0.1, 0.1, 0.0001, 1000.0]
     
     padding::Int = 100
     primes::Bool = true
@@ -87,7 +87,6 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     title_params::String = "params"
     particle_dump_file::String = "particle_dump.h5"
     particle_dump_time = [-1]
-    obs_noise_std::T = 1000.0
     #Path to the the local speedy directory
     SPEEDY::String = ""
     station_filename::String = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt")
@@ -96,8 +95,11 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     output_folder::String = joinpath(pwd())
     guess_folder::String = joinpath(output_folder, "DATA", "ensemble", "gues")
     anal_folder::String = joinpath(output_folder, "DATA", "ensemble", "anal")
+
+    obs_noise_std::Vector{T} = [1000.0]
     # Observed indices
-    observed_indices::Vector{Int} = [1,5]
+    observed_indices::Vector{Int} = [33]
+    n_assimilated_var::Int = length(observed_indices)
     # Grid dimensions
     nlon::Int = 96
     nlat::Int = 48
@@ -110,9 +112,9 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     dz::T = z_length / (nlev - 1)
 
     nij0::Int = nlon*nlat
-    n_state_var::Int = 6
     n_2d::Int = 2
     n_3d::Int = 4
+    n_state_var::Int = n_3d*nlev + n_2d
 
 end
 const SPEEDY_DATE_FORMAT = "YYYYmmddHH"
@@ -156,18 +158,22 @@ function get_obs!(obs::AbstractVector{T},
 end
 
 # Return observation data at stations from given model state
-function get_obs!(obs::AbstractVector{T},
-                  state::AbstractArray{T},
+function get_obs!(obs::AbstractArray{T},
+                  state::AbstractArray{T,3},
                   ist::AbstractVector{Int},
-                  jst::AbstractVector{Int}) where T
-    @assert length(obs) == length(ist) == length(jst)
-
-    for i in eachindex(obs)
-        ii = ist[i]
-        jj = jst[i]
-        obs[i] = state[ii,jj]
+                  jst::AbstractVector{Int},
+                  n_assimilated_var::Integer) where T
+    # @assert length(obs) == length(ist) == length(jst)
+    for var in 1:n_assimilated_var
+        # for i in eachindex(obs)
+        for i in 1:length(obs[:,1])
+            ii = ist[i]
+            jj = jst[i]
+            obs[i, var] = state[ii, jj, var]
+        end
     end
 end
+
 
 struct RandomField{F<:GaussianRandomField,X<:AbstractArray,W<:AbstractArray,Z<:AbstractArray}
     grf::F
@@ -217,7 +223,7 @@ end
 function init_gaussian_random_field_generator(params::ModelParameters)
 
     x, y, z = get_axes(params)
-    return init_gaussian_random_field_generator(params.lambda,params.nu, params.sigma, x, y, params.padding, params.primes)
+    return init_gaussian_random_field_generator(params.lambda,params.nu, params.sigma, x, y)
 
 end
 
@@ -228,9 +234,7 @@ function init_gaussian_random_field_generator(lambda::Vector{T},
                                               nu::Vector{T},
                                               sigma::Vector{T},
                                               xpts::AbstractVector{T},
-                                              ypts::AbstractVector{T},
-                                              pad::Int,
-                                              primes::Bool) where T
+                                              ypts::AbstractVector{T}) where T
 
     # Let's limit ourselves to two-dimensional fields
     dim = 2
@@ -259,29 +263,24 @@ function add_random_field!(state::AbstractArray{T},
                            field_buffer::AbstractArray{T},
                            generators::Vector{<:RandomField},
                            rng::Random.AbstractRNG,
-                           n_3d::Int,
-                           nlev::Int,                       
+                           nvar::Int,                       
                            nprt::Int) where T
 
     Threads.@threads for ip in 1:nprt
-        # for ivar in 1:n_3d
-        #     # Adding model noise to the 3D fields (U,V,T,q)
-        #     for lev in 1:nlev
-        #         sample_gaussian_random_field!(@view(field_buffer[:, :, lev, ivar, threadid()]), generators[ivar], rng)
-        #     end
-        # end
-        # state[:, :, :, 1:n_3d, ip] .+= @view(field_buffer[:, :, :, 1:n_3d, threadid()])
-        # Adding model noise to the surface pressure field
-        sample_gaussian_random_field!(@view(field_buffer[:, :, 1, 5, threadid()]), generators[1], rng)
-        state[:, :, 1, 5, ip] .+= @view(field_buffer[:, :, 1, 5, threadid()])
+        for ivar in 1:nvar
+
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[ivar], rng)
+            @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+
+        end
     end
 
 end
 
 
-function add_noise!(vec::AbstractVector{T}, rng::Random.AbstractRNG, params::ModelParameters) where T
+function add_noise!(vec::AbstractVector{T}, rng::Random.AbstractRNG, var::Int, params::ModelParameters) where T
 
-    add_noise!(vec, rng, 0.0, params.obs_noise_std)
+    add_noise!(vec, rng, 0.0, params.obs_noise_std[var])
 
 end
 
@@ -295,30 +294,34 @@ end
 
 function init_arrays(params::ModelParameters, nprt_per_rank)
 
-    return init_arrays(params.nlon, params.nlat, params.nlev, params.n_state_var, params.nobs, nprt_per_rank)
+    return init_arrays(params.nlon, params.nlat, params.n_state_var, params.nobs, params.n_assimilated_var, nprt_per_rank)
 
 end
 
-function init_arrays(ix::Int, iy::Int, iz::Int, n_state_var::Int, nobs::Int, nprt_per_rank::Int)
+function init_arrays(nx::Int, ny::Int, n_state_var::Int, nobs::Int, n_assimilated_var::Int, nprt_per_rank::Int)
 
     # TODO: ideally this will be an argument of the function, to choose a
     # different datatype.
     T = Float64
 
-    state_avg = zeros(T, ix, iy, iz, n_state_var) # average of particle state vectors
-    state_var = zeros(T, ix, iy, iz, n_state_var) # variance of particle state vectors
+    state_avg = zeros(T, nx, ny, n_state_var) # average of particle state vectors
+    state_var = zeros(T, nx, ny, n_state_var) # variance of particle state vectors
 
-    state_particles = zeros(T, ix, iy, iz, n_state_var, nprt_per_rank)
-    state_truth = zeros(T, ix, iy, 1) # model vector: true surface pressure (observation)
-    obs_truth = Vector{T}(undef, nobs)          # observed
-    obs_model = Matrix{T}(undef, nobs, nprt_per_rank) # forecasted
+    # Model vector for data assimilation
+    #   state[:, :, 1, :]: tsunami height eta(nx,ny)
+    #   state[:, :, 2, :]: vertically integrated velocity Mx(nx,ny)
+    #   state[:, :, 3, :]: vertically integrated velocity Mx(nx,ny)
+    state_particles = zeros(T, nx, ny, n_state_var, nprt_per_rank)
+    state_truth = zeros(T, nx, ny, n_state_var) # model vector: true wavefield (observation)
+    obs_truth = Array{T}(undef, nobs, n_assimilated_var)          # observed tsunami height
+    obs_model = Array{T}(undef, nobs, n_assimilated_var, nprt_per_rank) # forecasted tsunami height
 
     # station location in digital grids
-    ist = zeros(Int64,0)
-    jst = zeros(Int64,0)
+    ist = Vector{Int}(undef, nobs)
+    jst = Vector{Int}(undef, nobs)
 
-    # Buffer array to be used in the update
-    field_buffer = Array{T}(undef, ix, iy, iz, 5, nthreads())
+    # Buffer array to be used in the tsunami update
+    field_buffer = Array{T}(undef, nx, ny, 2, nthreads())
     return StateVectors(state_particles, state_truth), ObsVectors(obs_truth, obs_model), StationVectors(ist, jst), field_buffer
 end
 
@@ -331,11 +334,11 @@ function set_initial_state!(states::StateVectors, model_matrices::SPEEDY.Matrice
 
     # Set true initial state
     # Read in the initial nature run - just surface pressure
-    read_ps!(@view(states.truth[:,:,1]), joinpath(params.nature_dir, params.IDate * ".grd"), params.nlon, params.nlat, params.nlev)
+    read_grd!(@view(states.truth[:, :, :]), joinpath(params.nature_dir, params.IDate * ".grd"), params.nlon, params.nlat, params.nlev)
     ### Read in arbitrary nature run files for the initial conditions
     Threads.@threads for ip in 1:nprt_per_rank
         dummy_date = step_ens(params.ensDate, params.Hinc)
-        read_grd!(@view(states.particles[:,:,:,:,ip]), joinpath(params.nature_dir, dummy_date * ".grd"), params.nlon, params.nlat, params.nlev)
+        read_grd!(@view(states.particles[:, :, :, ip]), joinpath(params.nature_dir, dummy_date * ".grd"), params.nlon, params.nlat, params.nlev)
     end
 end
 
@@ -380,20 +383,27 @@ ParticleDA.get_stations(d::ModelData) = (nst = d.model_params.nobs,
                                          ist = d.stations.ist,
                                          jst = d.stations.jst)
 ParticleDA.get_obs_noise_std(d::ModelData) = d.model_params.obs_noise_std
-# Needs to be corrected
-ParticleDA.get_model_noise_params(d::ModelData) = Matern(d.model_params.lambda[1],
-                                                         d.model_params.nu[1],
-                                                         σ=d.model_params.sigma[1])
-ParticleDA.get_observed_state_indices(d::ModelData) = d.model_params.observed_indices                                 
+ParticleDA.get_observed_state_indices(d::ModelData) = d.model_params.observed_indices
+ParticleDA.get_number_assimilated_var(d::ModelData) = d.model_params.n_assimilated_var                                 
+
+function ParticleDA.get_model_noise_params(d::ModelData)
+    covariances = []
+    dim = 2
+    for i in 1:length(d.model_params.lambda[:])
+        push!(covariances, Periodic_Cov.CustomDistanceCovarianceStructure(Periodic_Cov.SphericalDistance(), 
+        Matern(d.model_params.lambda[i],d.model_params.nu[i], σ = d.model_params.sigma[i])).cov)
+    end
+    return covariances
+end
 
 function ParticleDA.set_particles!(d::ModelData, particles::AbstractArray{T}) where T
 
     d.states.particles .= particles
 
 end
-ParticleDA.get_grid_size(d::ModelData) = d.model_params.nlon,d.model_params.nlat,d.model_params.nlev
-ParticleDA.get_grid_domain_size(d::ModelData) = d.model_params.lon_length,d.model_params.lat_length,d.model_params.z_length
-ParticleDA.get_grid_cell_size(d::ModelData) = d.model_params.dx,d.model_params.dy,d.model_params.dz
+ParticleDA.get_grid_size(d::ModelData) = d.model_params.nlon,d.model_params.nlat#,d.model_params.nlev
+ParticleDA.get_grid_domain_size(d::ModelData) = d.model_params.lon_length,d.model_params.lat_length#,d.model_params.z_length
+ParticleDA.get_grid_cell_size(d::ModelData) = d.model_params.dx,d.model_params.dy#,d.model_params.dz
 ParticleDA.get_n_state_var(d::ModelData) = d.model_params.n_state_var
 
 
@@ -440,7 +450,7 @@ function init(model_params_dict::Dict, nprt_per_rank::Int, my_rank::Integer, rng
 
     return ModelData(model_params, states, observations, stations, field_buffer, background_grf, model_matrices, rng, model_dates)
 end
-function read_grd!(truth::AbstractArray{T}, filename::String,nlon::Int, nlat::Int, nlev::Int) where T
+function read_grd!(truth::AbstractArray{T}, filename::String, nlon::Int, nlat::Int, nlev::Int) where T
 
     nij0 = nlon*nlat
     iolen = 4
@@ -453,13 +463,13 @@ function read_grd!(truth::AbstractArray{T}, filename::String,nlon::Int, nlat::In
 
     for n = 1:nv3d
         for k = 1:nlev
-            truth[:,:,k,n] .= read(f, (Float32, nlon, nlat), rec=irec)
+            truth[:,:,k*n] .= read(f, (Float32, nlon, nlat), rec=irec)
             irec += 1
         end
     end
 
     for n = 1:nv2d
-        truth[:,:,1,(n+nv3d)] .= read(f, (Float32, nlon, nlat), rec = irec)
+        truth[:,:,(n+nv3d*nlev)] .= read(f, (Float32, nlon, nlat), rec = irec)
         irec += 1
     end
 
@@ -506,8 +516,8 @@ function write_fortran(filename::String,nlon::Int, nlat::Int, nlev::Int,dataset:
     iolen = 4
     v3d = Array{Float32, 4}(undef, nlon, nlat, nlev, nv3d)
     v2d = Array{Float32, 3}(undef, nlon, nlat, nv2d)
-    v3d .= dataset[:,:,:,1:4]
-    v2d .= dataset[:,:,1,5:6]
+    v3d .= reshape(dataset[:,:,1:(nv3d*nlev)], size(v3d))
+    v2d .= dataset[:,:,(nv3d*nlev):-1]
 
     f = FortranFile(filename, "w", access="direct", recl=(nij0*iolen))
     irec = 1
@@ -526,10 +536,11 @@ end
 
 function ParticleDA.update_truth!(d::ModelData, _)
     # Read in Nature run
-    read_ps!(@view(d.states.truth[:,:,1]), joinpath(d.model_params.nature_dir, d.dates[1] * ".grd"), d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
+    read_grd!(@view(d.states.truth[:,:,:]), joinpath(d.model_params.nature_dir, d.dates[1] * ".grd"), d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Get observation from nature run
-    get_obs!(d.observations.truth, d.states.truth[:,:,1], d.stations.ist, d.stations.jst, d.model_params)
-    add_noise!(d.observations.truth, d.rng, d.model_params)
+    indices = d.model_params.observed_indices
+    get_obs!(d.observations.truth, d.states.truth[:,:,indices], d.stations.ist, d.stations.jst, d.model_params)
+    # add_noise!(d.observations.truth, d.rng, d.model_params)
     return d.observations.truth
 end
 
@@ -546,11 +557,14 @@ function speedy_update!(SPEEDY::String,
 end
 
 function ParticleDA.sample_observations_given_particles!(simulated_observations::AbstractMatrix, d::ModelData, nprt_per_rank)
-    @assert size(simulated_observations) == (d.model_params.nobs, nprt_per_rank)
+    @assert size(simulated_observations) == (d.model_params.nobs, d.model_params.n_assimilated_var, nprt_per_rank)
     indices = d.model_params.observed_indices
     for ip in 1:nprt_per_rank
-        get_obs!(@view(simulated_observations[:, ip]), @view(d.states.particles[:, :, indices..., ip]), d.stations.ist, d.stations.jst, d.model_params)
-        add_noise!(@view(simulated_observations[:, ip]), d.rng, d.model_params)
+        get_obs!(@view(simulated_observations[:, :, ip]), @view(d.states.particles[:, :, indices, ip]), d.stations.ist, d.stations.jst, d.model_params)
+
+        for var in 1:d.model_params.n_assimilated_var
+            add_noise!(@view(simulated_observations[:, var, ip]), d.rng, var, d.model_params)
+        end
     end
     return simulated_observations
 end
@@ -560,12 +574,12 @@ function ParticleDA.update_particle_dynamics!(d::ModelData, nprt_per_rank)
     Threads.@threads for ip in 1:nprt_per_rank
         #Write to file
         anal_file = joinpath(d.model_params.anal_folder, string(my_rank), string(ip), d.dates[1] * ".grd")
-        write_fortran(anal_file,d.model_params.nlon, d.model_params.nlat, d.model_params.nlev,d.states.particles[:, :, :, :, ip])
+        write_fortran(anal_file,d.model_params.nlon, d.model_params.nlat, d.model_params.nlev, d.states.particles[:, :, :, ip])
         # Update the dynamics
         speedy_update!(d.model_params.SPEEDY,d.model_params.output_folder,d.dates[1],d.dates[2],string(my_rank),string(ip))
         # Read back in the data and update the states
         guess_file = joinpath(d.model_params.guess_folder, string(my_rank), string(ip), d.dates[2] * ".grd")
-        read_grd!(@view(d.states.particles[:, :, :, :, ip]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
+        read_grd!(@view(d.states.particles[:, :, :, ip]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
         # Remove old files
         rm(anal_file)
         rm(guess_file)
@@ -581,8 +595,7 @@ function ParticleDA.update_particle_noise!(d::ModelData, nprt_per_rank)
                       d.field_buffer,
                       d.background_grf,
                       d.rng,
-                      d.model_params.n_3d,
-                      d.model_params.nlev,
+                      d.model_params.n_state_var,
                       nprt_per_rank)
 end
 
@@ -590,8 +603,8 @@ function ParticleDA.get_particle_observations!(d::ModelData, nprt_per_rank)
     indices = d.model_params.observed_indices
     # get observations
     for ip in 1:nprt_per_rank
-        get_obs!(@view(d.observations.model[:,ip]),
-                 @view(d.states.particles[:, :, indices...,  ip]),
+        get_obs!(@view(d.observations.model[:, :, ip]),
+                 @view(d.states.particles[:, :, indices,  ip]),
                  d.stations.ist,
                  d.stations.jst,
                  d.model_params)
