@@ -263,16 +263,29 @@ function add_random_field!(state::AbstractArray{T},
                            field_buffer::AbstractArray{T},
                            generators::Vector{<:RandomField},
                            rng::Random.AbstractRNG,
-                           nvar::Int,                       
+                           nvar::Int,             
+                           observed_indices::Vector{Int},       
                            nprt::Int) where T
-
+    
     Threads.@threads for ip in 1:nprt
-        # for ivar in 1:nvar
-
-        sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[1], rng)
-        @view(state[:, :, 33, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-
-        # end
+        for ivar in 1:nvar
+            if ivar < 9
+                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[1], rng)
+                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            elseif 9 <= ivar < 17
+                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[2], rng)
+                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            elseif 17 <= ivar < 25 
+                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[3], rng)
+                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            elseif 25 <= ivar < 33
+                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[4], rng)
+                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            elseif ivar == 33
+                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[5], rng)
+                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            end
+        end
     end
 
 end
@@ -308,9 +321,6 @@ function init_arrays(nx::Int, ny::Int, n_state_var::Int, nobs::Int, n_assimilate
     state_var = zeros(T, nx, ny, n_state_var) # variance of particle state vectors
 
     # Model vector for data assimilation
-    #   state[:, :, 1, :]: tsunami height eta(nx,ny)
-    #   state[:, :, 2, :]: vertically integrated velocity Mx(nx,ny)
-    #   state[:, :, 3, :]: vertically integrated velocity Mx(nx,ny)
     state_particles = zeros(T, nx, ny, n_state_var, nprt_per_rank)
     state_truth = zeros(T, nx, ny, n_state_var) # model vector: true wavefield (observation)
     obs_truth = Array{T}(undef, nobs, n_assimilated_var)          # observed tsunami height
@@ -386,12 +396,11 @@ ParticleDA.get_number_assimilated_var(d::ModelData) = d.model_params.n_assimilat
 
 function ParticleDA.get_model_noise_params(d::ModelData)
     covariances = []
-    dim = 2
     for i in 1:length(d.model_params.lambda[:])
-        # push!(covariances, Periodic_Cov.CustomDistanceCovarianceStructure(Periodic_Cov.SphericalDistance(), 
-        # Matern(d.model_params.lambda[i],d.model_params.nu[i], σ = d.model_params.sigma[i])).cov)
         push!(covariances, Periodic_Cov.CustomDistanceCovarianceStructure(Periodic_Cov.SphericalDistance(), 
-        GaussianRandomFields.Exponential(d.model_params.lambda[i], σ = d.model_params.sigma[i])).cov)
+        Matern(d.model_params.lambda[i],d.model_params.nu[i], σ = d.model_params.sigma[i])).cov)
+        # push!(covariances, Periodic_Cov.CustomDistanceCovarianceStructure(Periodic_Cov.SphericalDistance(), 
+        # GaussianRandomFields.Exponential(d.model_params.lambda[i], σ = d.model_params.sigma[i])).cov)
 
     end
     return covariances
@@ -482,36 +491,6 @@ function read_grd!(truth::AbstractArray{T}, filename::String, nlon::Int, nlat::I
 
 end
 
-function read_ps!(truth::AbstractMatrix{T}, filename::String, nlon::Int, nlat::Int, nlev::Int) where T
-
-    nij0 = nlon*nlat
-    iolen = 4
-    nv3d = 4
-    nv2d = 2
-
-    v3d = Array{Float32, 4}(undef, nlon, nlat, nlev, nv3d)
-    v2d = Array{Float32, 3}(undef, nlon, nlat, nv2d)
-
-    f = FortranFile(filename, access="direct", recl=nij0*iolen)
-
-    irec = 1
-
-    for n = 1:nv3d
-        for k = 1:nlev
-            v3d[:,:,k,n] = read(f, (Float32, nlon, nlat), rec=irec)
-            irec += 1
-        end
-    end
-
-    for n = 1:nv2d
-        v2d[:,:,n] = read(f, (Float32, nlon, nlat), rec = irec)
-        irec += 1
-    end
-    truth .= v2d[:,:,1]
-    close(f)
-
-end
-
 function write_fortran(filename::String,nlon::Int, nlat::Int, nlev::Int,dataset::AbstractArray{T}) where T
 
     nij0 = nlon*nlat
@@ -567,8 +546,13 @@ function ParticleDA.sample_observations_given_particles!(
     @assert size(simulated_observations) == (d.model_params.nobs, d.model_params.n_assimilated_var, nprt_per_rank)
     indices = d.model_params.observed_indices
     for ip in 1:nprt_per_rank
-        get_obs!(@view(simulated_observations[:, :, ip]), @view(d.states.particles[:, :, indices, ip]), d.stations.ist, d.stations.jst, d.model_params)
-
+        get_obs!(
+            @view(simulated_observations[:, :, ip]), 
+            @view(d.states.particles[:, :, indices, ip]), 
+            d.stations.ist, 
+            d.stations.jst, 
+            d.model_params
+        )
         for var in 1:d.model_params.n_assimilated_var
             add_noise!(@view(simulated_observations[:, var, ip]), d.rng, var, d.model_params)
         end
@@ -602,7 +586,8 @@ function ParticleDA.update_particle_noise!(d::ModelData, nprt_per_rank)
                       d.field_buffer,
                       d.background_grf,
                       d.rng,
-                      d.model_params.n_state_var,
+                      d.model_params.n_assimilated_var,
+                      d.model_params.observed_indices,
                       nprt_per_rank)
 end
 
@@ -749,13 +734,26 @@ function ParticleDA.write_snapshot(output_filename::AbstractString,
                                    d::ModelData) where T
 
     println("Writing output at timestep = ", it)
+    nv3d = 4
+    # nv2d = 2
+    nlev = 8 
+    truth  = zeros(96, 48, 8, 6)
+    avg3d  = zeros(96, 48, 8, 6)
+    var3d  = zeros(96, 48, 8, 6)
+    truth[:,:,:,1:4] .= reshape(states.truth[:,:,1:(nv3d*nlev)], (96,48,8,4))
+    truth[:,:,1,5:6] .= states.truth[:,:,(nv3d*nlev)+1:(nv3d*nlev)+2]
+
+    avg3d[:,:,:,1:4] .= reshape(avg[:,:,1:(nv3d*nlev)], (96,48,8,4))
+    avg3d[:,:,1,5:6] .= avg[:,:,(nv3d*nlev)+1:(nv3d*nlev)+2]
+
+    var3d[:,:,:,1:4] .= reshape(var[:,:,1:(nv3d*nlev)], (96,48,8,4))
+    var3d[:,:,1,5:6] .= var[:,:,(nv3d*nlev)+1:(nv3d*nlev)+2]
 
     h5open(output_filename, "cw") do file
         for (i,(name,desc,unit)) in enumerate(zip(name(states, :particles), description(states, :particles), unit(states, :particles)))
-            write_field(file, @view(states.truth[:,:,i]), it, unit, d.model_params.title_syn, name, desc, d)
-            write_field(file, @view(avg[:,:,i]), it, unit, d.model_params.title_avg, name, desc, d)
-            write_field(file, @view(var[:,:,i]), it, "("*unit*")^2", d.model_params.title_var, name, desc, d)
-
+            write_field(file, @view(truth[:,:,:,i]), it, unit, d.model_params.title_syn, name, desc, d)
+            write_field(file, @view(avg3d[:,:,:,i]), it, unit, d.model_params.title_avg, name, desc, d)
+            write_field(file, @view(var3d[:,:,:,i]), it, "("*unit*")^2", d.model_params.title_var, name, desc, d)
         end
 
         write_weights(file, weights, "", it, d)
