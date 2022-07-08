@@ -263,28 +263,29 @@ function add_random_field!(state::AbstractArray{T},
                            field_buffer::AbstractArray{T},
                            generators::Vector{<:RandomField},
                            rng::Random.AbstractRNG,
-                           nvar::Int,             
-                           observed_indices::Vector{Int},       
+                           nvar::Int,      
                            nprt::Int) where T
     
     Threads.@threads for ip in 1:nprt
         for ivar in 1:nvar
-            if ivar < 9
-                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[1], rng)
-                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-            elseif 9 <= ivar < 17
-                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[2], rng)
-                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-            elseif 17 <= ivar < 25 
-                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[3], rng)
-                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-            elseif 25 <= ivar < 33
-                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[4], rng)
-                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-            elseif ivar == 33
-                sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[5], rng)
-                @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
-            end
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[ivar], rng)
+            @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # if ivar < 9
+            #     sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[1], rng)
+            #     @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # elseif 9 <= ivar < 17
+            #     sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[2], rng)
+            #     @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # elseif 17 <= ivar < 25 
+            #     sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[3], rng)
+            #     @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # elseif 25 <= ivar < 33
+            #     sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[4], rng)
+            #     @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # elseif ivar == 33
+            #     sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[5], rng)
+            #     @view(state[:, :, ivar, ip]) .+= @view(field_buffer[:, :, 1, threadid()])
+            # end
         end
     end
 
@@ -524,7 +525,9 @@ function ParticleDA.update_truth!(d::ModelData, _)
     # Get observation from nature run
     indices = d.model_params.observed_indices
     get_obs!(d.observations.truth, d.states.truth[:,:,indices], d.stations.ist, d.stations.jst, d.model_params)
-    # add_noise!(d.observations.truth, d.rng, d.model_params)
+    for var in 1:d.model_params.n_assimilated_var
+        add_noise!(@view(d.observations.truth[:, var]), d.rng, var, d.model_params)
+    end
     return d.observations.truth
 end
 
@@ -587,7 +590,6 @@ function ParticleDA.update_particle_noise!(d::ModelData, nprt_per_rank)
                       d.background_grf,
                       d.rng,
                       d.model_params.n_assimilated_var,
-                      d.model_params.observed_indices,
                       nprt_per_rank)
 end
 
