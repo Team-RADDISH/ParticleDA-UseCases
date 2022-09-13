@@ -4,6 +4,7 @@ filter:
   enable_timers: true
   output_filename: "results/test.h5"
   n_time_step: 10
+  truth_param_file: "/Users/dangiles/Documents/RADDISH/ParticleDA-UseCases/SPEEDY/speedy_ground_truth.yaml"
 model:
   speedy:
     nlon: 96
@@ -11,8 +12,8 @@ model:
     IDate: "1982010100"
     dtDate: "1982010106"
     ensDate: "1991120100"
-    nobs: 416
-    obs_network: "real"
+    nobs: 50
+    obs_network: "uniform"
     obs_noise_std: [500.0]
     SPEEDY: "/Users/dangiles/Documents/RADDISH/speedy"
     lambda: [1.0]
@@ -24,5 +25,6 @@ model:
     sigma_initial_state: [1000.0]
     particle_dump_file: "results/particles.h5"
 
-    observed_indices: [33]
+    observed_state_var_indices: [33]
     n_assimilated_var: 1
+  
