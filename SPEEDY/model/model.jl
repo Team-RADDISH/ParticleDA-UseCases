@@ -22,7 +22,7 @@ using .Periodic_Cov
 Parameters for the model. Keyword arguments:
 
 * `IDate::String` : Start date for the simulations in the format: YYYYmmddHH
-* `dtDate::String` : Incremental date in the format: YYYYmmddHH
+* `endDate::String` : End date for the simulations in the format: YYYYmmddHH
 * `Hinc::Int` : Hourly increment
 * `obs_network::String` : Location of observations (real or uniform)
 * `nobs::Int` : Number of observation stations
@@ -56,7 +56,7 @@ Base.@kwdef struct ModelParameters{T<:AbstractFloat}
     # Initial date
     IDate::String=""
     # Incremental date
-    dtDate::String=""
+    endDate::String=""
     # Hour interval
     Hinc::Int = 6
     # Ensemble initialisation
@@ -142,7 +142,7 @@ const STATE_FIELDS_METADATA = [
     StateFieldMetadata("rain", "mm/hr", "Rain"),
 ]
 
-struct ModelData{T <: Real, U <: Real, G <: GaussianRandomField, S <: String}
+struct ModelData{T <: Real, U <: Real, G <: GaussianRandomField, S <: DateTime}
     model_params::ModelParameters{T}
     station_grid_indices::Matrix{Int}
     field_buffer::Array{T, 4}
@@ -283,24 +283,27 @@ function add_random_field!(
     field_buffer::AbstractMatrix{T},
     generators::Vector{<:RandomField},
     rng::Random.AbstractRNG,) where T
-    for ivar in 1:33
-        if ivar < 9
-            sample_gaussian_random_field!(field_buffer, generators[1], rng)
-            state_fields[:, :, ivar] .+= field_buffer
-        elseif 9 <= ivar < 17
-            sample_gaussian_random_field!(field_buffer, generators[2], rng)
-            state_fields[:, :, ivar] .+= field_buffer 
-        elseif 17 <= ivar < 25 
-            sample_gaussian_random_field!(field_buffer, generators[3], rng)
-            state_fields[:, :, ivar] .+= field_buffer 
-        elseif 25 <= ivar < 33
-            sample_gaussian_random_field!(field_buffer, generators[4], rng)
-            state_fields[:, :, ivar] .+= field_buffer 
-        elseif ivar == 33
-            sample_gaussian_random_field!(field_buffer, generators[5], rng)
-            state_fields[:, :, ivar] .+= field_buffer 
-        end
-    end
+    # @show length(generators)
+    sample_gaussian_random_field!(field_buffer, generators[1], rng)
+    state_fields[:, :, 33] .+= field_buffer
+    # for ivar in 1:33
+    #     if ivar < 9
+    #         sample_gaussian_random_field!(field_buffer, generators[1], rng)
+    #         state_fields[:, :, ivar] .+= field_buffer
+    #     elseif 9 <= ivar < 17
+    #         sample_gaussian_random_field!(field_buffer, generators[2], rng)
+    #         state_fields[:, :, ivar] .+= field_buffer 
+    #     elseif 17 <= ivar < 25 
+    #         sample_gaussian_random_field!(field_buffer, generators[3], rng)
+    #         state_fields[:, :, ivar] .+= field_buffer 
+    #     elseif 25 <= ivar < 33
+    #         sample_gaussian_random_field!(field_buffer, generators[4], rng)
+    #         state_fields[:, :, ivar] .+= field_buffer 
+    #     elseif ivar == 33
+    #         sample_gaussian_random_field!(field_buffer, generators[5], rng)
+    #         state_fields[:, :, ivar] .+= field_buffer 
+    #     end
+    # end
 end
 
 
@@ -547,7 +550,7 @@ function init(model_params_dict::Dict)
         model_params.anal_folder,
         model_params.guess_folder
     )
-    dates = [model_params.IDate,model_params.dtDate]
+    dates = collect(DateTime(model_params.IDate, SPEEDY_DATE_FORMAT):Dates.Hour(6):DateTime(model_params.endDate, SPEEDY_DATE_FORMAT))
 
     return ModelData(
         model_params, 
@@ -608,7 +611,7 @@ function ParticleDA.get_log_density_observation_given_state(
 end
 
 function ParticleDA.update_state_deterministic!(
-    state::AbstractVector, d::ModelData, ip::Integer
+    state::AbstractVector, d::ModelData, time_index::Int
 )
     state_fields = reshape(
         state, 
@@ -619,27 +622,38 @@ function ParticleDA.update_state_deterministic!(
         )
     )
     my_rank = MPI.Comm_rank(MPI.COMM_WORLD)
+    prt = rand(1:100000)
     # Check if the subfolders have been generated
-    thread_anal_folder = joinpath(d.model_params.anal_folder, string(my_rank), string(ip))
-    thread_guess_folder = joinpath(d.model_params.guess_folder, string(my_rank), string(ip))
-    thread_rank_tmp = joinpath(d.model_params.output_folder, "DATA", "tmp", string(my_rank), string(ip))
-
-    if isdir(thread_anal_folder) == false
-        mkdir(thread_anal_folder)
-        mkdir(thread_guess_folder)
-        mkdir(thread_rank_tmp)
+    prt_anal_folder = joinpath(d.model_params.anal_folder, string(my_rank), string(prt))
+    prt_guess_folder = joinpath(d.model_params.guess_folder, string(my_rank), string(prt))
+    prt_rank_tmp = joinpath(d.model_params.output_folder, "DATA", "tmp", string(my_rank), string(prt))
+ 
+    while isdir(prt_anal_folder) == true
+        prt = rand(1:100000)
+        prt_anal_folder = joinpath(d.model_params.anal_folder, string(my_rank), string(prt))
+        prt_guess_folder = joinpath(d.model_params.guess_folder, string(my_rank), string(prt))
+        prt_rank_tmp = joinpath(d.model_params.output_folder, "DATA", "tmp", string(my_rank), string(prt))
     end
+    mkdir(prt_anal_folder)
+    mkdir(prt_guess_folder)
+    mkdir(prt_rank_tmp)
+
+    idate = Dates.format(d.dates[time_index],SPEEDY_DATE_FORMAT)
+    dtdate = Dates.format(d.dates[time_index+1],SPEEDY_DATE_FORMAT)
     #Write to file
-    anal_file = joinpath(thread_anal_folder, d.dates[1] * ".grd")
+    anal_file = joinpath(prt_anal_folder, idate * ".grd")
     write_fortran(anal_file,d.model_params.nlon, d.model_params.nlat, d.model_params.nlev, state_fields[:, :, :])
     # Update the dynamics
-    speedy_update!(d.model_params.SPEEDY,d.model_params.output_folder,d.dates[1],d.dates[2],string(my_rank),string(ip))
+    speedy_update!(d.model_params.SPEEDY,d.model_params.output_folder,idate, dtdate, string(my_rank), string(prt))
     # Read back in the data and update the states
-    guess_file = joinpath(thread_guess_folder, d.dates[2] * ".grd")
+    guess_file = joinpath(prt_guess_folder, dtdate * ".grd")
     read_grd!(@view(state_fields[:, :, :]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Remove old files
-    rm(anal_file)
-    rm(guess_file)
+    rm(prt_anal_folder; recursive=true)
+    rm(prt_guess_folder; recursive=true)
+    rm(prt_rank_tmp; recursive=true)
+    
+    # d.dates[1,threadid()], d.dates[2,threadid()] = step_datetime(d.dates[1,threadid()],d.dates[2,threadid()])
 end
 
 function ParticleDA.update_state_stochastic!(
@@ -788,8 +802,8 @@ function write_grid(output_filename, params)
             ds_y,dtype_x = create_dataset(group, "y", collect(x))
             ds_x[1:params.nlon] = collect(x)
             ds_y[1:params.nlat] = collect(y)
-            attributes(ds_x)["Unit"] = "m"
-            attributes(ds_y)["Unit"] = "m"
+            attributes(ds_x)["Unit"] = "°"
+            attributes(ds_y)["Unit"] = "°"
 
         else
 
@@ -815,7 +829,7 @@ function write_stations(
                 ds, dtype = create_dataset(group, dataset_name, val)
                 ds[:] = val
                 attributes(ds)["Description"] = "Station $dataset_name coordinate"
-                attributes(ds)["Unit"] = "m"
+                attributes(ds)["Unit"] = "°"
             end
         else
             @warn "Write failed, group $(params.title_stations) already exists in  $(file.filename)!"
@@ -991,4 +1005,6 @@ function write_field(
     else
         @warn "Write failed, dataset $group_name/$subgroup_name/$dataset_name already exists in $(file.filename) !"
     end
+end
+
 end
