@@ -35,7 +35,7 @@ cp    $SC/ssta.grd  $particle/fort.30
 # Run
 cd $particle
 ln -fs $OUTPUT/anal/${rank}/${particle}/${YMDH}.grd fort.90
-ln -fs $OUTPUT/gues/fluxes.grd fluxes.grd
+ln -fs $OUTPUT/gues/${rank}/${particle}/fluxes.grd fluxes.grd
 FORT2=2
 echo $FORT2 > fort.2
 echo $YMDH | cut -c1-4 >> fort.2

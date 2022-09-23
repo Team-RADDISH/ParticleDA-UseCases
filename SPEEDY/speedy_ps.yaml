@@ -1,16 +1,17 @@
 filter:
-  nprt: 10
+  nprt: 20
   verbose: true
   enable_timers: true
-  output_filename: "results/test.h5"
-  n_time_step: 10
-  truth_param_file: "/Users/dangiles/Documents/RADDISH/ParticleDA-UseCases/SPEEDY/speedy_ground_truth.yaml"
+  output_filename: "results/flatten/test.h5"
+  n_time_step: 50
+  particle_save_time_indices: [0]
+
 model:
   speedy:
     nlon: 96
     nlat: 48
     IDate: "1982010100"
-    dtDate: "1982010106"
+    endDate: "1982020106"
     ensDate: "1991120100"
     nobs: 50
     obs_network: "uniform"

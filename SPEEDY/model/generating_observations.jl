@@ -76,7 +76,7 @@ end
 
 function write_obs(file::HDF5.File, observation::AbstractVector, it::Int)
 
-    group_name = "obs"
+    group_name = "observations"
     dataset_name = "t" * lpad(string(it),4,'0')
 
     group, subgroup = ParticleDA.create_or_open_group(file, group_name)
@@ -145,7 +145,7 @@ for time in 1:timesteps
         observation[i] = array[indices[i,1], indices[i,2], indices[i,3]]
     end
     dates[1], dates[2] = step_datetime(dates[1],dates[2])
-    write_state_and_observations("observations_truth.h5", observation, timesteps)
+    write_state_and_observations("observations.h5", observation, time)
 
 end
 

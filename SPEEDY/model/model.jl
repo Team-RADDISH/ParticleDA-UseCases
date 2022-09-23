@@ -134,8 +134,8 @@ struct StateFieldMetadata
 end
 
 const STATE_FIELDS_METADATA = [
-    StateFieldMetadata("u", "m/s", "Ocean surface velocity x-component"),
-    StateFieldMetadata("v", "m/s", "Ocean surface velocity y-component"),
+    StateFieldMetadata("u", "m/s", "Velocity zonal-component"),
+    StateFieldMetadata("v", "m/s", "Velocity meridional-component"),
     StateFieldMetadata("T", "K", "Temperature"),
     StateFieldMetadata("Q", "kg/kg", "Specific Humidity"),
     StateFieldMetadata("ps", "Pa", "Surface Pressure"),
@@ -165,6 +165,15 @@ function ParticleDA.get_params(T::Type{ModelParameters}, user_input_dict::Dict)
     params = T(;user_input...)
 
 end
+
+function flat_state_to_fields(state::AbstractArray, params::ModelParameters)
+    if ndims(state) == 1
+        return reshape(state, (params.nlon, params.nlat, params.n_state_var))
+    else
+        return reshape(state, (params.nlon, params.nlat, params.n_state_var, :))
+    end
+end
+
 
 function step_datetime(idate::String,dtdate::String)
     new_idate = Dates.format(DateTime(idate, SPEEDY_DATE_FORMAT) + Dates.Hour(6), SPEEDY_DATE_FORMAT)
@@ -224,12 +233,12 @@ function speedy_update!(SPEEDY::String,
     run(`$forecast $SPEEDY $output $YMDH $TYMDH $rank $particle`)
 end
 
-function get_axes(params::ModelParameters)
+function get_grid_axes(params::ModelParameters)
 
-    return get_axes(params.nlon, params.nlat, params.nlev)
+    return get_grid_axes(params.nlon, params.nlat, params.nlev)
 
 end
-function get_axes(ix::Int, iy::Int, iz::Int)
+function get_grid_axes(ix::Int, iy::Int, iz::Int)
     x = LinRange(0, 2*π, ix)
     y = LinRange(0, π, iy)
     z = LinRange(0, 1, iz)
@@ -283,7 +292,6 @@ function add_random_field!(
     field_buffer::AbstractMatrix{T},
     generators::Vector{<:RandomField},
     rng::Random.AbstractRNG,) where T
-    # @show length(generators)
     sample_gaussian_random_field!(field_buffer, generators[1], rng)
     state_fields[:, :, 33] .+= field_buffer
     # for ivar in 1:33
@@ -316,14 +324,7 @@ function ParticleDA.sample_initial_state!(
     model_data::ModelData, 
     rng::Random.AbstractRNG,
 ) where T
-    state_fields = reshape(
-        state, 
-        (
-            model_data.model_params.nlon, 
-            model_data.model_params.nlat, 
-            model_data.model_params.n_state_var, 
-        )
-    )
+    state_fields = flat_state_to_fields(state, model_data.model_params)
     # Set true initial state
     # Read in the initial nature run - just surface pressure
     # read_grd!(@view(state_fields[:, :, :]), joinpath(model_data.model_params.nature_dir, model_data.model_params.IDate * ".grd"), model_data.model_params.nlon, model_data.model_params.nlat, model_data.model_params.nlev)
@@ -523,7 +524,7 @@ function init(model_params_dict::Dict)
     observation_buffer = Array{T}(undef, n_observations, nthreads())
     
     # Gaussian random fields for generating intial state and state noise
-    x, y = get_axes(model_params)
+    x, y = get_grid_axes(model_params)
     initial_state_grf = init_gaussian_random_field_generator(
         model_params.lambda_initial_state,
         model_params.nu_initial_state,
@@ -567,19 +568,14 @@ end
 function ParticleDA.get_observation_mean_given_state!(
     observation_mean::AbstractVector, state::AbstractVector, model_data::ModelData
 )
-    return get_obs!(
-        observation_mean, 
-        reshape(
-            state, 
-            (
-                model_data.model_params.nlon, 
-                model_data.model_params.nlat, 
-                model_data.model_params.n_state_var
-            )
-        ), 
-        model_data.model_params, 
-        model_data.station_grid_indices
-    )
+    state_fields = flat_state_to_fields(state, model_data.model_params)
+    n = 1
+    for k in model_data.model_params.observed_state_var_indices
+        for (i, j) in eachrow(model_data.station_grid_indices)
+            observation_mean[n] = state_fields[i, j, k]
+            n += 1
+        end
+    end
 end
 
 function ParticleDA.sample_observation_given_state!(
@@ -613,30 +609,19 @@ end
 function ParticleDA.update_state_deterministic!(
     state::AbstractVector, d::ModelData, time_index::Int
 )
-    state_fields = reshape(
-        state, 
-        (
-            d.model_params.nlon, 
-            d.model_params.nlat, 
-            d.model_params.n_state_var, 
-        )
-    )
+    state_fields = flat_state_to_fields(state, d.model_params)
     my_rank = MPI.Comm_rank(MPI.COMM_WORLD)
-    prt = rand(1:100000)
+    prt = threadid()
     # Check if the subfolders have been generated
     prt_anal_folder = joinpath(d.model_params.anal_folder, string(my_rank), string(prt))
     prt_guess_folder = joinpath(d.model_params.guess_folder, string(my_rank), string(prt))
     prt_rank_tmp = joinpath(d.model_params.output_folder, "DATA", "tmp", string(my_rank), string(prt))
  
-    while isdir(prt_anal_folder) == true
-        prt = rand(1:100000)
-        prt_anal_folder = joinpath(d.model_params.anal_folder, string(my_rank), string(prt))
-        prt_guess_folder = joinpath(d.model_params.guess_folder, string(my_rank), string(prt))
-        prt_rank_tmp = joinpath(d.model_params.output_folder, "DATA", "tmp", string(my_rank), string(prt))
+    if isdir(prt_anal_folder) == false
+        mkdir(prt_anal_folder)
+        mkdir(prt_guess_folder)
+        mkdir(prt_rank_tmp)
     end
-    mkdir(prt_anal_folder)
-    mkdir(prt_guess_folder)
-    mkdir(prt_rank_tmp)
 
     idate = Dates.format(d.dates[time_index],SPEEDY_DATE_FORMAT)
     dtdate = Dates.format(d.dates[time_index+1],SPEEDY_DATE_FORMAT)
@@ -649,27 +634,16 @@ function ParticleDA.update_state_deterministic!(
     guess_file = joinpath(prt_guess_folder, dtdate * ".grd")
     read_grd!(@view(state_fields[:, :, :]), guess_file, d.model_params.nlon, d.model_params.nlat, d.model_params.nlev)
     # Remove old files
-    rm(prt_anal_folder; recursive=true)
-    rm(prt_guess_folder; recursive=true)
-    rm(prt_rank_tmp; recursive=true)
-    
-    # d.dates[1,threadid()], d.dates[2,threadid()] = step_datetime(d.dates[1,threadid()],d.dates[2,threadid()])
+    rm(anal_file)
+    rm(guess_file)
 end
 
 function ParticleDA.update_state_stochastic!(
     state::AbstractVector, model_data::ModelData, rng::AbstractRNG
 )
-    state_fields = reshape(
-        state, 
-        (
-            model_data.model_params.nlon, 
-            model_data.model_params.nlat, 
-            model_data.model_params.n_state_var, 
-        )
-    )
     # Add state noise
     add_random_field!(
-        state_fields,
+        flat_state_to_fields(state, model_data.model_params),
         view(model_data.field_buffer, :, :, 1, threadid()),
         model_data.state_noise_grf,
         rng,
@@ -761,6 +735,101 @@ end
 
 
 ### Model IO
+function write_parameters(group::HDF5.Group, params::ModelParameters)
+    fields = fieldnames(typeof(params))
+    for field in fields
+        attributes(group)[string(field)] = getfield(params, field)
+    end
+end
+
+function write_coordinates(group::HDF5.Group, x::AbstractVector, y::AbstractVector)
+    for (dataset_name, val) in zip(("lon", "lat"), (x, y))
+        dataset, _ = create_dataset(group, dataset_name, val)
+        dataset[:] = val
+        attributes(dataset)["Description"] = "$dataset_name coordinate"
+        attributes(dataset)["Unit"] = "°"
+    end
+end
+
+function ParticleDA.write_model_metadata(file::HDF5.File, model_data::ModelData)
+    model_params = model_data.model_params
+    grid_x, grid_y = map(collect, get_grid_axes(model_params))
+    stations_x = (model_data.station_grid_indices[:, 1] .- 1) .* model_params.dx
+    stations_y = (model_data.station_grid_indices[:, 2] .- 1) .* model_params.dy
+    for (group_name, write_group) in [
+        ("parameters", group -> write_parameters(group, model_params)),
+        ("grid_coordinates", group -> write_coordinates(group, grid_x, grid_y)),
+        ("station_coordinates", group -> write_coordinates(group, stations_x, stations_y)),
+    ]
+        if !haskey(file, group_name)
+            group = create_group(file, group_name)
+            write_group(group)
+        else
+            @warn "Write failed, group $group_name already exists in  $(file.filename)!"
+        end
+    end
+end    
+
+function ParticleDA.write_state(
+    file::HDF5.File,
+    state::AbstractVector{T},
+    time_index::Int,
+    group_name::String,
+    model_data::ModelData
+) where T
+    model_params = model_data.model_params
+    subgroup_name = "t" * lpad(string(time_index), 4, '0')
+    _, subgroup = ParticleDA.create_or_open_group(file, group_name, subgroup_name)
+    state_fields = flat_state_to_fields(state, model_params)
+    state_fields_metadata = [
+        (name="u1", level = "1", unit="m/s", description="Velocity zonal-component"),
+        (name="u2", level = "2", unit="m/s", description="Velocity zonal-component"),
+        (name="u3", level = "3", unit="m/s", description="Velocity zonal-component"),
+        (name="u4", level = "4", unit="m/s", description="Velocity zonal-component"),
+        (name="u5", level = "5", unit="m/s", description="Velocity zonal-component"),
+        (name="u6", level = "6", unit="m/s", description="Velocity zonal-component"),
+        (name="u7", level = "7", unit="m/s", description="Velocity zonal-component"),
+        (name="u8", level = "8", unit="m/s", description="Velocity zonal-component"),
+        (name="v1", level = "1", unit="m/s", description="Velocity meridional-component"),
+        (name="v2", level = "2", unit="m/s", description="Velocity meridional-component"),
+        (name="v3", level = "3", unit="m/s", description="Velocity meridional-component"),
+        (name="v4", level = "4", unit="m/s", description="Velocity meridional-component"),
+        (name="v5", level = "5", unit="m/s", description="Velocity meridional-component"),
+        (name="v6", level = "6", unit="m/s", description="Velocity meridional-component"),
+        (name="v7", level = "7", unit="m/s", description="Velocity meridional-component"),
+        (name="v8", level = "8", unit="m/s", description="Velocity meridional-component"),
+        (name="T1", level = "1", unit="K", description="Temperature"),
+        (name="T2", level = "2", unit="K", description="Temperature"),
+        (name="T3", level = "3", unit="K", description="Temperature"),
+        (name="T4", level = "4", unit="K", description="Temperature"),
+        (name="T5", level = "5", unit="K", description="Temperature"),
+        (name="T6", level = "6", unit="K", description="Temperature"),
+        (name="T7", level = "7", unit="K", description="Temperature"),
+        (name="T8", level = "8", unit="K", description="Temperature"),
+        (name="Q1", level = "1", unit="kg/kg", description="Specific Humidity"),
+        (name="Q2", level = "2", unit="kg/kg", description="Specific Humidity"),
+        (name="Q3", level = "3", unit="kg/kg", description="Specific Humidity"),
+        (name="Q4", level = "4", unit="kg/kg", description="Specific Humidity"),
+        (name="Q5", level = "5", unit="kg/kg", description="Specific Humidity"),
+        (name="Q6", level = "6", unit="kg/kg", description="Specific Humidity"),
+        (name="Q7", level = "7", unit="kg/kg", description="Specific Humidity"),
+        (name="Q8", level = "8", unit="kg/kg", description="Specific Humidity"),
+        (name="ps", level = "1", unit="Pa", description="Surface Pressure"),
+        (name="rain", level = "1", unit="mm/hr", description="Rain")
+    ]
+    for (field, metadata) in zip(eachslice(state_fields, dims=3), state_fields_metadata)
+        if !haskey(subgroup, metadata.name) && !haskey(subgroup, metadata.level)
+            subgroup[metadata.name] = field
+            dataset_attributes = attributes(subgroup[metadata.name])
+            dataset_attributes["Description"] = metadata.description
+            dataset_attributes["Level"] = metadata.level
+            dataset_attributes["Unit"] = metadata.unit
+            dataset_attributes["Time step"] = time_index
+        else
+            @warn "Write failed, dataset $group_name/$subgroup_name/$(metadata.name) already exists in $(file.filename) !"
+        end
+    end
+end
 
 function write_params(output_filename, params)
 
@@ -786,225 +855,6 @@ function write_params(output_filename, params)
 
     close(file)
 
-end
-
-function write_grid(output_filename, params)
-
-    h5open(output_filename, "cw") do file
-
-        if !haskey(file, params.title_grid)
-
-            # Write grid axes
-            group = create_group(file, params.title_grid)
-            x,y = get_axes(params)
-            #TODO: use d_write instead of create_dataset when they fix it in the HDF5 package
-            ds_x,dtype_x = create_dataset(group, "x", collect(x))
-            ds_y,dtype_x = create_dataset(group, "y", collect(x))
-            ds_x[1:params.nlon] = collect(x)
-            ds_y[1:params.nlat] = collect(y)
-            attributes(ds_x)["Unit"] = "°"
-            attributes(ds_y)["Unit"] = "°"
-
-        else
-
-            @warn "Write failed, group $(params.title_grid) already exists in $(file.filename) !"
-
-        end
-
-    end
-
-end
-
-function write_stations(
-    output_filename, station_grid_indices::AbstractMatrix, params::ModelParameters
-) where T
-
-    h5open(output_filename, "cw") do file
-
-        if !haskey(file, params.title_stations)
-            group = create_group(file, params.title_stations)
-            x = (station_grid_indices[:, 1] .- 1) .* params.dx
-            y = (station_grid_indices[:, 2] .- 1) .* params.dy
-            for (dataset_name, val) in zip(("x", "y"), (x, y))
-                ds, dtype = create_dataset(group, dataset_name, val)
-                ds[:] = val
-                attributes(ds)["Description"] = "Station $dataset_name coordinate"
-                attributes(ds)["Unit"] = "°"
-            end
-        else
-            @warn "Write failed, group $(params.title_stations) already exists in  $(file.filename)!"
-        end
-    end
-end
-
-function write_weights(file::HDF5.File, weights::AbstractVector, it::Int, params::ModelParameters)
-
-    group_name = "weights"
-    dataset_name = "t" * lpad(string(it),4,'0')
-
-    group, subgroup = ParticleDA.create_or_open_group(file, group_name)
-
-    if !haskey(group, dataset_name)
-        #TODO: use d_write instead of create_dataset when they fix it in the HDF5 package
-        ds,dtype = create_dataset(group, dataset_name, weights)
-        ds[:] = weights
-        attributes(ds)["Description"] = "Particle Weights"
-        attributes(ds)["Unit"] = ""
-        attributes(ds)["Time step"] = it
-        # attributes(ds)["Time (s)"] = it * params.time_step
-    else
-        @warn "Write failed, dataset $group_name/$dataset_name  already exists in $(file.filename) !"
-    end
-
-end
-
-function ParticleDA.write_snapshot(output_filename::AbstractString,
-                                   model_data::ModelData,
-                                   states::AbstractMatrix{T},
-                                   avg::AbstractArray{T},
-                                   var::AbstractArray{T},
-                                   weights::AbstractVector{T},
-                                   it::Int) where T
-
-    if it == 0
-        # These are written only at the initial state it == 0
-        write_grid(output_filename, model_data.model_params)
-        write_params(output_filename, model_data.model_params)
-        write_stations(
-            output_filename, model_data.station_grid_indices, model_data.model_params
-        )
-    end
-
-    if any(model_data.model_params.particle_dump_time .== it)
-        write_particles(
-            model_data.model_params.particle_dump_file, 
-            states, 
-            it, 
-            model_data.model_params
-        )
-    end
-
-    return ParticleDA.write_snapshot(
-        output_filename, avg, var, weights, it, model_data.model_params
-    )
-end
-
-function ParticleDA.write_snapshot(output_filename::AbstractString,
-                                   avg::AbstractArray{T},
-                                   var::AbstractArray{T},
-                                   weights::AbstractVector{T},
-                                   it::Int,
-                                   params::ModelParameters) where T
-
-    println("Writing output at timestep = ", it)
-    
-    avg = reshape(avg, (params.nlon, params.nlat, params.n_state_var, :))
-    var = reshape(var, (params.nlon, params.nlat, params.n_state_var, :))
-
-    h5open(output_filename, "cw") do file
-
-        for (i, metadata) in enumerate(STATE_FIELDS_METADATA)
-
-            write_field(file, @view(avg[:,:,i]), it, params.title_avg, metadata, params)
-            write_field(file, @view(var[:,:,i]), it, params.title_var, metadata, params)
-
-        end
-
-        write_weights(file, weights, it, params)
-    end
-
-end
-
-function write_obs(file::HDF5.File, observation::AbstractVector, it::Int, params::ModelParameters)
-
-    group_name = "obs"
-    dataset_name = "t" * lpad(string(it),4,'0')
-
-    group, subgroup = ParticleDA.create_or_open_group(file, group_name)
-
-    if !haskey(group, dataset_name)
-        #TODO: use d_write instead of create_dataset when they fix it in the HDF5 package
-        ds,dtype = create_dataset(group, dataset_name, observation)
-        ds[:] = observation
-        attributes(ds)["Description"] = "Observations"
-        attributes(ds)["Unit"] = ""
-        attributes(ds)["Time step"] = it
-        # attributes(ds)["Time (s)"] = it * params.time_step
-    else
-        @warn "Write failed, dataset $group_name/$dataset_name  already exists in $(file.filename) !"
-    end
-
-end
-
-function ParticleDA.write_state_and_observations(state::AbstractArray{T}, 
-                                      observation::AbstractArray{T},
-                                      it::Int, 
-                                      model_data::ModelData) where T
-
-    println("Writing output at timestep = ", it)
-    params = model_data.model_params
-    state = reshape(state, (params.nlon, params.nlat, params.n_state_var, :))
-    h5open(params.truth_obs_filename, "cw") do file
-        for (i, metadata) in enumerate(STATE_FIELDS_METADATA)
-            write_field(file, @view(state[:,:,i]), it, params.title_syn, metadata, params)
-        end
-        if it > 0
-            # These are written only after the initial state
-            write_obs(file, observation, it, params)
-        end
-    end
-end
-
-function write_particles(
-    output_filename::AbstractString,
-    states::AbstractMatrix{T},
-    it::Int,
-    params::ModelParameters
-) where T
-
-    println("Writing particle states at timestep = ", it)
-    
-    nprt = size(states, 2)
-    state_fields = reshape(states, (params.nlon, params.nlat, params.n_state_var, nprt))
-
-    h5open(output_filename, "cw") do file
-        for p = 1:nprt
-            group_name = "particle" * string(p)
-            for (i, metadata) in enumerate(STATE_FIELDS_METADATA)
-                write_field(
-                    file, @view(state_fields[:, :, i, p]), it, group_name, metadata, params
-                )
-            end
-        end
-    end
-
-end
-
-function write_field(
-    file::HDF5.File,
-    field::AbstractMatrix{T},
-    it::Int,
-    group::String,
-    metadata::StateFieldMetadata,
-    params::ModelParameters
-) where T
-
-    group_name = params.state_prefix * "_" * group
-    subgroup_name = "t" * lpad(string(it), 4, '0')
-    dataset_name = metadata.name
-
-    group, subgroup = ParticleDA.create_or_open_group(file, group_name, subgroup_name)
-
-    if !haskey(subgroup, dataset_name)
-        #TODO: use d_write instead of create_dataset when they fix it in the HDF5 package
-        ds, _ = create_dataset(subgroup, dataset_name, field)
-        ds[:,:] = field
-        attributes(ds)["Description"] = metadata.description
-        attributes(ds)["Unit"] = metadata.unit
-        attributes(ds)["Time step"] = it
-    else
-        @warn "Write failed, dataset $group_name/$subgroup_name/$dataset_name already exists in $(file.filename) !"
-    end
 end
 
 end

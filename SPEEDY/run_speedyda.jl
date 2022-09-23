@@ -5,7 +5,7 @@ using ParticleDA
 test_dir = joinpath(@__DIR__)
 module_src = joinpath(test_dir, "model", "model.jl")
 input_file = joinpath(test_dir,"speedy_ps.yaml")
-obs_file = joinpath(test_dir, "model", "observations_truth.h5")
+obs_file = joinpath(test_dir, "results", "flatten", "observations.h5")
 # # Instantiate the test environment
 using Pkg
 Pkg.activate(test_dir)
@@ -14,4 +14,4 @@ Pkg.instantiate()
 # Include the sample model source code and load it
 include(module_src)
 using .Model
-run_particle_filter(Model.init, input_file, OptimalFilter(), obs_file)
+run_particle_filter(Model.init, input_file, obs_file, ParticleDA.OptimalFilter, ParticleDA.NaiveMeanSummaryStat)
