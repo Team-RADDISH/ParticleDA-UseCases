@@ -1,30 +1,24 @@
 filter:
-  nprt: 20
+  nprt: 256
   verbose: true
   enable_timers: true
-  output_filename: "results/flatten/test.h5"
-  n_time_step: 50
-  particle_save_time_indices: [0]
+  output_filename: ""
+  particle_save_time_indices: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600]
 
 model:
   speedy:
     nlon: 96
     nlat: 48
     IDate: "1982010100"
-    endDate: "1982020106"
+    endDate: "1982080100"
     ensDate: "1991120100"
     nobs: 50
     obs_network: "uniform"
-    obs_noise_std: [500.0]
-    SPEEDY: "/Users/dangiles/Documents/RADDISH/speedy"
-    lambda: [1.0]
+    obs_noise_std: [1000.0]
+    SPEEDY: ""
+    lambda: [10.0]
     nu: [2.5]
-    sigma: [1000.0]
-    particle_dump_time: [60]
-    lambda_initial_state: [1.0]
-    nu_initial_state: [2.5]
-    sigma_initial_state: [1000.0]
-    particle_dump_file: "results/particles.h5"
+    sigma: [100.0]
 
     observed_state_var_indices: [33]
     n_assimilated_var: 1

@@ -122,9 +122,6 @@ get_float_eltype(p::ModelParameters) = get_float_eltype(typeof(p))
 
 struct RandomField{F<:GaussianRandomField}
     grf::F
-    # xi::Array{T, 3}
-    # w::Array{Complex{T}, 3}
-    # z::Array{T, 3}
 end
 
 struct StateFieldMetadata
@@ -176,8 +173,8 @@ end
 
 
 function step_datetime(idate::String,dtdate::String)
-    new_idate = Dates.format(DateTime(idate, SPEEDY_DATE_FORMAT) + Dates.Hour(6), SPEEDY_DATE_FORMAT)
-    new_dtdate = Dates.format(DateTime(dtdate, SPEEDY_DATE_FORMAT) + Dates.Hour(6), SPEEDY_DATE_FORMAT)
+    new_idate = Dates.format(DateTime(idate, SPEEDY_DATE_FORMAT) + Dates.Hour(3), SPEEDY_DATE_FORMAT)
+    new_dtdate = Dates.format(DateTime(dtdate, SPEEDY_DATE_FORMAT) + Dates.Hour(3), SPEEDY_DATE_FORMAT)
     return new_idate,new_dtdate
 end
 
@@ -268,10 +265,6 @@ function init_gaussian_random_field_generator(lambda::Vector{T},
     function _generate(l, n, s)
         cov = Periodic_Cov.CovarianceFunction(dim, Periodic_Cov.CustomDistanceCovarianceStructure(Periodic_Cov.SphericalDistance(), Matern(l, n, σ = s)))
         grf = GaussianRandomField(cov, Spectral(), xpts, ypts)
-        v = grf.data.eigenval
-        xi = Array{eltype(grf.cov)}(undef, size(v)..., nthreads())
-        w = Array{complex(float(eltype(grf.cov)))}(undef, size(v)..., nthreads())
-        z = Array{eltype(grf.cov)}(undef, length.(grf.pts)..., nthreads())
         RandomField(grf)
     end
 
@@ -294,24 +287,24 @@ function add_random_field!(
     rng::Random.AbstractRNG,) where T
     sample_gaussian_random_field!(field_buffer, generators[1], rng)
     state_fields[:, :, 33] .+= field_buffer
-    # for ivar in 1:33
-    #     if ivar < 9
-    #         sample_gaussian_random_field!(field_buffer, generators[1], rng)
-    #         state_fields[:, :, ivar] .+= field_buffer
-    #     elseif 9 <= ivar < 17
-    #         sample_gaussian_random_field!(field_buffer, generators[2], rng)
-    #         state_fields[:, :, ivar] .+= field_buffer 
-    #     elseif 17 <= ivar < 25 
-    #         sample_gaussian_random_field!(field_buffer, generators[3], rng)
-    #         state_fields[:, :, ivar] .+= field_buffer 
-    #     elseif 25 <= ivar < 33
-    #         sample_gaussian_random_field!(field_buffer, generators[4], rng)
-    #         state_fields[:, :, ivar] .+= field_buffer 
-    #     elseif ivar == 33
-    #         sample_gaussian_random_field!(field_buffer, generators[5], rng)
-    #         state_fields[:, :, ivar] .+= field_buffer 
-    #     end
-    # end
+    # # for ivar in 1:33
+    #     # if ivar < 9
+    #     sample_gaussian_random_field!(field_buffer, generators[1], rng)
+    #     state_fields[:, :, 1] .+= field_buffer
+    # # # elseif 9 <= ivar < 17
+    #     sample_gaussian_random_field!(field_buffer, generators[2], rng)
+    #     state_fields[:, :, 9] .+= field_buffer 
+    # # # elseif 17 <= ivar < 25 
+    #     sample_gaussian_random_field!(field_buffer, generators[3], rng)
+    #     state_fields[:, :, 17] .+= field_buffer 
+    # # # elseif 25 <= ivar < 33
+    #     sample_gaussian_random_field!(field_buffer, generators[4], rng)
+    #     state_fields[:, :, 25] .+= field_buffer 
+    # # # elseif ivar == 33
+    #     sample_gaussian_random_field!(field_buffer, generators[5], rng)
+    #     state_fields[:, :, 33] .+= field_buffer 
+    #     # end
+    # # end
 end
 
 
@@ -325,10 +318,7 @@ function ParticleDA.sample_initial_state!(
     rng::Random.AbstractRNG,
 ) where T
     state_fields = flat_state_to_fields(state, model_data.model_params)
-    # Set true initial state
-    # Read in the initial nature run - just surface pressure
-    # read_grd!(@view(state_fields[:, :, :]), joinpath(model_data.model_params.nature_dir, model_data.model_params.IDate * ".grd"), model_data.model_params.nlon, model_data.model_params.nlat, model_data.model_params.nlev)
-    ### Read in arbitrary nature run files for the initial conditions
+    # Read in arbitrary nature run files for the initial conditions
     dummy_date = step_ens(model_data.model_params.ensDate, model_data.model_params.Hinc, rng)
     read_grd!(@view(state_fields[:, :, :]), joinpath(model_data.model_params.nature_dir, dummy_date * ".grd"), model_data.model_params.nlon, model_data.model_params.nlat, model_data.model_params.nlev)
     
@@ -388,7 +378,7 @@ function ParticleDA.get_covariance_observation_noise(
     x_index_2, y_index_2, var_index_2 = state_index_2.I
 
     if (x_index_1 == x_index_2 && y_index_1 == y_index_2)
-        return (d.model_params.obs_noise_std[var_index_1]^2)
+        return (d.model_params.obs_noise_std[1]^2)
     else
         return 0.
     end
@@ -424,8 +414,9 @@ function observation_index_to_cartesian_state_index(
 )
     n_station = size(station_grid_indices,1)
     state_var_index, station_index = fldmod1(observation_index, n_station)
+    assimilated_var = model_params.observed_state_var_indices
     return CartesianIndex(
-        station_grid_indices[station_index, :]..., state_var_index
+        station_grid_indices[station_index, :]..., assimilated_var[state_var_index]
     )
 end
 
@@ -451,10 +442,8 @@ function ParticleDA.get_covariance_state_noise(
         grid_point_2 = grid_index_to_grid_point(
             model_data.model_params, (x_index_2, y_index_2)
         )
-        covariance_structure = model_data.state_noise_grf[var_index_1].grf.cov.cov.cov
-        return covariance_structure.σ^2 * apply(
-            covariance_structure, abs.(grid_point_1 .- grid_point_2)
-        )
+        covariance_structure = model_data.state_noise_grf[1].grf.cov.cov
+        return covariance_structure.cov.σ^2*apply(covariance_structure, apply(covariance_structure.distance, (grid_point_1[1], grid_point_1[2]), (grid_point_2[1], grid_point_2[2])))
     else
         return 0.
     end
@@ -525,13 +514,7 @@ function init(model_params_dict::Dict)
     
     # Gaussian random fields for generating intial state and state noise
     x, y = get_grid_axes(model_params)
-    initial_state_grf = init_gaussian_random_field_generator(
-        model_params.lambda_initial_state,
-        model_params.nu_initial_state,
-        model_params.sigma_initial_state,
-        x,
-        y
-    )
+    
     state_noise_grf = init_gaussian_random_field_generator(
         model_params.lambda,
         model_params.nu,
@@ -540,6 +523,7 @@ function init(model_params_dict::Dict)
         y
     )
 
+    initial_state_grf = state_noise_grf
     # Set up tsunami model
     model_matrices = SPEEDY.setup(
         model_params.nlon,
@@ -551,7 +535,7 @@ function init(model_params_dict::Dict)
         model_params.anal_folder,
         model_params.guess_folder
     )
-    dates = collect(DateTime(model_params.IDate, SPEEDY_DATE_FORMAT):Dates.Hour(6):DateTime(model_params.endDate, SPEEDY_DATE_FORMAT))
+    dates = collect(DateTime(model_params.IDate, SPEEDY_DATE_FORMAT):Dates.Hour(3):DateTime(model_params.endDate, SPEEDY_DATE_FORMAT))
 
     return ModelData(
         model_params, 

@@ -118,10 +118,14 @@ end
 
 
 IDate="1982010100"
-dtDate="1982010106"
+dtDate="1982010103"
+endDate = "1982080100"
 SPEEDY= ""
 obs_network ="uniform"
-timesteps = 50
+SPEEDY_DATE_FORMAT = "YYYYmmddHH"
+dt = 3
+delta = (DateTime(endDate, SPEEDY_DATE_FORMAT)- DateTime(IDate, SPEEDY_DATE_FORMAT))
+num_timesteps = Dates.Hour(delta)/dt
 nobs = 50 
 
 station_filename = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt")
@@ -130,22 +134,23 @@ obs_indices = [33]
 array = zeros(96,48,34)
 
 
-station_grid_indices = get_station_grid_indices(station_filename, timesteps)
-indices = hcat(station_grid_indices[:,1], station_grid_indices[:,2], repeat(obs_indices,50))
+station_grid_indices = get_station_grid_indices(station_filename, nobs)
+indices = hcat(station_grid_indices[:,1], station_grid_indices[:,2])#, repeat(obs_indices,nobs))
 
 obs_dim = (size(station_grid_indices, 1) * length(obs_indices))
 observation = zeros(obs_dim)
 dates = [IDate,dtDate]
 
-for time in 1:timesteps
+for time in 1:num_timesteps.value
     truth_file = joinpath(nature_dir, dates[1] * ".grd")
     read_grd!(array, truth_file, 96, 48, 8)
-    for i in 1:nobs
-        # observation_squence[i,1] = array[indices[i,1], indices[i,2], indices[i,3]]
-        observation[i] = array[indices[i,1], indices[i,2], indices[i,3]]
+    for k in obs_indices
+        for i in 1:nobs
+            observation[i] = array[indices[i,1], indices[i,2], k]
+        end
     end
     dates[1], dates[2] = step_datetime(dates[1],dates[2])
-    write_state_and_observations("observations.h5", observation, time)
+    write_state_and_observations("", observation, time)
 
 end
 
