@@ -1,0 +1,25 @@
+filter:
+  nprt: 256
+  verbose: true
+  enable_timers: true
+  output_filename: ""
+  particle_save_time_indices: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600]
+
+model:
+  speedy:
+    nlon: 96
+    nlat: 48
+    IDate: "1982010100"
+    endDate: "1982080100"
+    ensDate: "1991120100"
+    nobs: 50
+    obs_network: "uniform"
+    obs_noise_std: [1000.0]
+    SPEEDY: ""
+    lambda: [10.0]
+    nu: [2.5]
+    sigma: [100.0]
+
+    observed_state_var_indices: [33]
+    n_assimilated_var: 1
+  
