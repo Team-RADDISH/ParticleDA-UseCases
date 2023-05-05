@@ -118,15 +118,15 @@ end
 
 
 IDate="1982010100"
-dtDate="1982010103"
+dtDate="1982010106"
 endDate = "1982080100"
 SPEEDY= ""
 obs_network ="uniform"
 SPEEDY_DATE_FORMAT = "YYYYmmddHH"
-dt = 3
-delta = (DateTime(endDate, SPEEDY_DATE_FORMAT)- DateTime(IDate, SPEEDY_DATE_FORMAT))
+dt = 6
+delta = (DateTime(endDate, SPEEDY_DATE_FORMAT) - DateTime(IDate, SPEEDY_DATE_FORMAT))
 num_timesteps = Dates.Hour(delta)/dt
-nobs = 50 
+nobs = 50
 
 station_filename = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt")
 nature_dir = joinpath(SPEEDY, "DATA", "nature")
