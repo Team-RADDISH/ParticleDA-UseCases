@@ -3,7 +3,7 @@ filter:
   verbose: true
   enable_timers: true
   output_filename: ""
-  particle_save_time_indices: [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600]
+  particle_save_time_indices: [0, 50, 100, 200, 300, 400, 500, 600, 700, 800]
 
 model:
   speedy:
@@ -22,4 +22,8 @@ model:
 
     observed_state_var_indices: [33]
     n_assimilated_var: 1
-  
+
+simulate_observations:
+  seed: 123
+  n_time_step: 848
+    

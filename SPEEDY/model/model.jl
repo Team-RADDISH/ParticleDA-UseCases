@@ -173,8 +173,8 @@ end
 
 
 function step_datetime(idate::String,dtdate::String)
-    new_idate = Dates.format(DateTime(idate, SPEEDY_DATE_FORMAT) + Dates.Hour(3), SPEEDY_DATE_FORMAT)
-    new_dtdate = Dates.format(DateTime(dtdate, SPEEDY_DATE_FORMAT) + Dates.Hour(3), SPEEDY_DATE_FORMAT)
+    new_idate = Dates.format(DateTime(idate, SPEEDY_DATE_FORMAT) + Dates.Hour(6), SPEEDY_DATE_FORMAT)
+    new_dtdate = Dates.format(DateTime(dtdate, SPEEDY_DATE_FORMAT) + Dates.Hour(6), SPEEDY_DATE_FORMAT)
     return new_idate,new_dtdate
 end
 
@@ -284,27 +284,11 @@ function add_random_field!(
     state_fields::AbstractArray{T, 3},
     field_buffer::AbstractMatrix{T},
     generators::Vector{<:RandomField},
+    observation_indices::Vector{Int},
     rng::Random.AbstractRNG,) where T
+
     sample_gaussian_random_field!(field_buffer, generators[1], rng)
-    state_fields[:, :, 33] .+= field_buffer
-    # # for ivar in 1:33
-    #     # if ivar < 9
-    #     sample_gaussian_random_field!(field_buffer, generators[1], rng)
-    #     state_fields[:, :, 1] .+= field_buffer
-    # # # elseif 9 <= ivar < 17
-    #     sample_gaussian_random_field!(field_buffer, generators[2], rng)
-    #     state_fields[:, :, 9] .+= field_buffer 
-    # # # elseif 17 <= ivar < 25 
-    #     sample_gaussian_random_field!(field_buffer, generators[3], rng)
-    #     state_fields[:, :, 17] .+= field_buffer 
-    # # # elseif 25 <= ivar < 33
-    #     sample_gaussian_random_field!(field_buffer, generators[4], rng)
-    #     state_fields[:, :, 25] .+= field_buffer 
-    # # # elseif ivar == 33
-    #     sample_gaussian_random_field!(field_buffer, generators[5], rng)
-    #     state_fields[:, :, 33] .+= field_buffer 
-    #     # end
-    # # end
+    state_fields[:, :, observation_indices[1]] .+= field_buffer
 end
 
 
@@ -317,11 +301,13 @@ function ParticleDA.sample_initial_state!(
     model_data::ModelData, 
     rng::Random.AbstractRNG,
 ) where T
-    state_fields = flat_state_to_fields(state, model_data.model_params)
     # Read in arbitrary nature run files for the initial conditions
     dummy_date = step_ens(model_data.model_params.ensDate, model_data.model_params.Hinc, rng)
-    read_grd!(@view(state_fields[:, :, :]), joinpath(model_data.model_params.nature_dir, dummy_date * ".grd"), model_data.model_params.nlon, model_data.model_params.nlat, model_data.model_params.nlev)
-    
+    read_grd!(flat_state_to_fields(state, model_data.model_params), 
+            joinpath(model_data.model_params.nature_dir, dummy_date * ".grd"), 
+            model_data.model_params.nlon, 
+            model_data.model_params.nlat, 
+            model_data.model_params.nlev)
     return state
 end
 
@@ -535,7 +521,7 @@ function init(model_params_dict::Dict)
         model_params.anal_folder,
         model_params.guess_folder
     )
-    dates = collect(DateTime(model_params.IDate, SPEEDY_DATE_FORMAT):Dates.Hour(3):DateTime(model_params.endDate, SPEEDY_DATE_FORMAT))
+    dates = collect(DateTime(model_params.IDate, SPEEDY_DATE_FORMAT):Dates.Hour(model_params.Hinc):DateTime(model_params.endDate, SPEEDY_DATE_FORMAT))
 
     return ModelData(
         model_params, 
@@ -569,10 +555,8 @@ function ParticleDA.sample_observation_given_state!(
     rng::AbstractRNG
 ) where{S, T}
     ParticleDA.get_observation_mean_given_state!(observation, state, model_data)
-    add_noise!(
-        observation, 
-        rng, 
-        ParticleDA.get_covariance_observation_noise(model_data),
+    observation .+= rand(
+        rng, MvNormal(ParticleDA.get_covariance_observation_noise(model_data))
     )
     return observation
 end
@@ -623,13 +607,14 @@ function ParticleDA.update_state_deterministic!(
 end
 
 function ParticleDA.update_state_stochastic!(
-    state::AbstractVector, model_data::ModelData, rng::AbstractRNG
+    state::AbstractVector, model::ModelData, rng::AbstractRNG
 )
     # Add state noise
     add_random_field!(
-        flat_state_to_fields(state, model_data.model_params),
-        view(model_data.field_buffer, :, :, 1, threadid()),
-        model_data.state_noise_grf,
+        flat_state_to_fields(state, model.model_params),
+        view(model.field_buffer, :, :, 1, threadid()),
+        model.state_noise_grf,
+        model.model_params.observed_state_var_indices,
         rng,
     )
 end
