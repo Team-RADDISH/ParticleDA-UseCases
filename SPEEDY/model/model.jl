@@ -429,7 +429,7 @@ function ParticleDA.get_covariance_state_noise(
             model_data.model_params, (x_index_2, y_index_2)
         )
         covariance_structure = model_data.state_noise_grf[1].grf.cov.cov
-        return covariance_structure.cov.σ^2*apply(covariance_structure, apply(covariance_structure.distance, (grid_point_1[1], grid_point_1[2]), (grid_point_2[1], grid_point_2[2])))
+        return apply(covariance_structure, apply(covariance_structure.distance, (grid_point_1[1], grid_point_1[2]), (grid_point_2[1], grid_point_2[2])))
     else
         return 0.
     end
