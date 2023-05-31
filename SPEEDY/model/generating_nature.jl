@@ -63,11 +63,11 @@ end
 function write_state_and_observations(filename::String, observation::AbstractArray{T},
     it::Int) where T
 
-    println("Writing output at timestep = ", it)
+    println("Writing output at timestep = ", (it-1))
     h5open(filename, "cw") do file
         if it >= 0
             # These are written only after the initial state
-            write_state(file, observation, it)
+            write_state(file, observation, (it-1))
         end
     end
 end
@@ -177,18 +177,18 @@ function write_state(
 end
 
 IDate="1982010100"
-dtDate="1982010103"
+dtDate="1982010106"
 endDate = "1982080100"
-SPEEDY= ""
+SPEEDY= "/Users/dangiles/Documents/RADDISH/speedy"
 SPEEDY_DATE_FORMAT = "YYYYmmddHH"
 delta = (DateTime(endDate, SPEEDY_DATE_FORMAT)- DateTime(IDate, SPEEDY_DATE_FORMAT))
-num_timesteps = Dates.Hour(delta)/3
+num_timesteps = Dates.Hour(delta)/6
 
 nature_dir = joinpath(SPEEDY, "DATA", "nature")
 array = zeros(96,48,34)
 dates = [IDate,dtDate]
 
-for time in 0:num_timesteps.value
+for time in 1:num_timesteps.value+1
     truth_file = joinpath(nature_dir, dates[1] * ".grd")
     read_grd!(array, truth_file, 96, 48, 8)
     write_state_and_observations("", array, time)

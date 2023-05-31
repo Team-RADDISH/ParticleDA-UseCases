@@ -391,7 +391,7 @@ function grid_index_to_grid_point(
     model_params::ModelParameters, grid_index::Tuple{T, T}
 ) where {T <: Integer}
     return [
-        (grid_index[1] - 1) * model_params.dx, (grid_index[2] - 1) * model_params.dy
+        ((grid_index[1] - 1) * model_params.dx *(π/180.0)), ((grid_index[2] - 1) * model_params.dy*(π/180.0))
     ]
 end
 
