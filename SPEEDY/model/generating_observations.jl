@@ -129,7 +129,7 @@ delta = (DateTime(endDate, SPEEDY_DATE_FORMAT) - DateTime(IDate, SPEEDY_DATE_FOR
 num_timesteps = Dates.Hour(delta)/dt
 nobs = 50
 
-station_filename = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt") 
+station_filename = joinpath(SPEEDY, "obs", "networks", obs_network * ".txt")
 nature_dir = joinpath(SPEEDY, "DATA", "nature")
 obs_indices = [33]
 array = zeros(96,48,34)
