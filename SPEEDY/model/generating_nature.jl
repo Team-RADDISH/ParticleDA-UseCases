@@ -179,7 +179,7 @@ end
 IDate="1982010100"
 dtDate="1982010106"
 endDate = "1982080100"
-SPEEDY= "/Users/dangiles/Documents/RADDISH/speedy"
+SPEEDY= ""
 SPEEDY_DATE_FORMAT = "YYYYmmddHH"
 delta = (DateTime(endDate, SPEEDY_DATE_FORMAT)- DateTime(IDate, SPEEDY_DATE_FORMAT))
 num_timesteps = Dates.Hour(delta)/6
