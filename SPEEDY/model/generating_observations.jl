@@ -1,7 +1,8 @@
 using FortranFiles
 using Dates
 using HDF5
-
+using Random
+using Distributions
 using ParticleDA
 const SPEEDY_DATE_FORMAT = "YYYYmmddHH"
 
@@ -117,8 +118,8 @@ function get_station_grid_indices(
 end
 
 
-IDate="1982010100"
-dtDate="1982010106"
+IDate="1982010106"
+dtDate="1982010112"
 endDate = "1982080100"
 SPEEDY= ""
 obs_network ="uniform"
@@ -135,13 +136,13 @@ array = zeros(96,48,34)
 
 
 station_grid_indices = get_station_grid_indices(station_filename, nobs)
-indices = hcat(station_grid_indices[:,1], station_grid_indices[:,2])#, repeat(obs_indices,nobs))
+indices = hcat(station_grid_indices[:,1], station_grid_indices[:,2])
 
 obs_dim = (size(station_grid_indices, 1) * length(obs_indices))
 observation = zeros(obs_dim)
 dates = [IDate,dtDate]
 
-for time in 1:num_timesteps.value
+for time in 1:num_timesteps.value+1
     truth_file = joinpath(nature_dir, dates[1] * ".grd")
     read_grd!(array, truth_file, 96, 48, 8)
     for k in obs_indices
