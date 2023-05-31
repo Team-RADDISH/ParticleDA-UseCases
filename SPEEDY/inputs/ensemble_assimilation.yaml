@@ -12,9 +12,9 @@ model:
     IDate: "1982010100"
     endDate: "1982080100"
     ensDate: "1991120100"
-    nobs: 50
-    obs_network: "uniform"
-    obs_noise_std: [1000.0]
+    nobs: 416
+    obs_network: "real"
+    obs_noise_std: [100.0]
     SPEEDY: ""
     lambda: [10.0]
     nu: [2.5]
