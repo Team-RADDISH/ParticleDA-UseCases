@@ -308,6 +308,16 @@ function ParticleDA.sample_initial_state!(
             model_data.model_params.nlon, 
             model_data.model_params.nlat, 
             model_data.model_params.nlev)
+
+    # Add state noise
+    add_random_field!(
+        flat_state_to_fields(state, model_data.model_params),
+        view(model_data.field_buffer, :, :, 1, threadid()),
+        model_data.state_noise_grf,
+        model_data.model_params.observed_state_var_indices,
+        rng,
+    )
+
     return state
 end
 
@@ -328,15 +338,11 @@ function get_station_grid_indices(
     open(filename,"r") do f
         readline(f)
         readline(f)
-        count = 0
         ind = 1 
         for line in eachline(f)
-            if count%10 == 0
-                station_grid_indices[ind, 1] = parse(Int64,split(line)[1])
-                station_grid_indices[ind, 2] = parse(Int64,split(line)[2])
-                ind += 1
-            end
-            count = count + 1
+            station_grid_indices[ind, 1] = parse(Int64,split(line)[1])
+            station_grid_indices[ind, 2] = parse(Int64,split(line)[2])
+            ind += 1
         end
     end
     return station_grid_indices
@@ -421,7 +427,7 @@ function ParticleDA.get_covariance_state_noise(
 )
     x_index_1, y_index_1, var_index_1 = state_index_1.I
     x_index_2, y_index_2, var_index_2 = state_index_2.I
-    if var_index_1 == var_index_2
+    if var_index_1 == var_index_2 == model_data.model_params.observed_state_var_indices[1]
         grid_point_1 = grid_index_to_grid_point(
             model_data.model_params, (x_index_1, y_index_1)
         )
@@ -429,7 +435,7 @@ function ParticleDA.get_covariance_state_noise(
             model_data.model_params, (x_index_2, y_index_2)
         )
         covariance_structure = model_data.state_noise_grf[1].grf.cov.cov
-        return covariance_structure.cov.σ^2*apply(covariance_structure, apply(covariance_structure.distance, (grid_point_1[1], grid_point_1[2]), (grid_point_2[1], grid_point_2[2])))
+        return apply(covariance_structure, apply(covariance_structure.distance, (grid_point_1[1], grid_point_1[2]), (grid_point_2[1], grid_point_2[2])))
     else
         return 0.
     end
