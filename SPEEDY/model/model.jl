@@ -282,13 +282,32 @@ end
 # Add a gaussian random field to the height in the state vector of all particles
 function add_random_field!(
     state_fields::AbstractArray{T, 3},
-    field_buffer::AbstractMatrix{T},
+    field_buffer::AbstractArray{T, 3},
     generators::Vector{<:RandomField},
     observation_indices::Vector{Int},
     rng::Random.AbstractRNG,) where T
 
-    sample_gaussian_random_field!(field_buffer, generators[1], rng)
-    state_fields[:, :, observation_indices[1]] .+= field_buffer
+    # Threads.@threads for ip in 1:nprt
+
+    for ivar in 1:length(state_fields[1,1,:])
+        if ivar < 9
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 1, threadid()]), generators[1], rng)
+            @view(state_fields[:, :, ivar]) .+= @view(field_buffer[:, :, 1, threadid()])
+        elseif 9 <= ivar < 17
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 2, threadid()]), generators[2], rng)
+            @view(state_fields[:, :, ivar]) .+= @view(field_buffer[:, :, 2, threadid()])
+        elseif 17 <= ivar < 25 
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 3, threadid()]), generators[3], rng)
+            @view(state_fields[:, :, ivar]) .+= @view(field_buffer[:, :, 3, threadid()])
+        elseif 25 <= ivar < 33
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 4, threadid()]), generators[4], rng)
+            @view(state_fields[:, :, ivar]) .+= @view(field_buffer[:, :, 4, threadid()])
+        elseif ivar == 33
+            sample_gaussian_random_field!(@view(field_buffer[:, :, 5, threadid()]), generators[5], rng)
+            @view(state_fields[:, :, ivar]) .+= @view(field_buffer[:, :, 5, threadid()])
+        end
+    end
+
 end
 
 
@@ -312,7 +331,7 @@ function ParticleDA.sample_initial_state!(
     # Add state noise
     add_random_field!(
         flat_state_to_fields(state, model_data.model_params),
-        view(model_data.field_buffer, :, :, 1, threadid()),
+        view(model_data.field_buffer, :, :, :, threadid()),
         model_data.state_noise_grf,
         model_data.model_params.observed_state_var_indices,
         rng,
@@ -338,11 +357,15 @@ function get_station_grid_indices(
     open(filename,"r") do f
         readline(f)
         readline(f)
+        count = 0
         ind = 1 
         for line in eachline(f)
-            station_grid_indices[ind, 1] = parse(Int64,split(line)[1])
-            station_grid_indices[ind, 2] = parse(Int64,split(line)[2])
-            ind += 1
+            if count%10 == 0
+                station_grid_indices[ind, 1] = parse(Int64,split(line)[1])
+                station_grid_indices[ind, 2] = parse(Int64,split(line)[2])
+                ind += 1
+            end
+            count = count + 1
         end
     end
     return station_grid_indices
@@ -499,7 +522,7 @@ function init(model_params_dict::Dict)
     n_observations = n_stations * length(model_params.observed_state_var_indices)
     
     # Buffer array to be used in the tsunami update
-    field_buffer = Array{T}(undef, model_params.nlon, model_params.nlat, 2, nthreads())
+    field_buffer = Array{T}(undef, model_params.nlon, model_params.nlat, 5, nthreads())
     
     # Buffer array to be used in computing observation mean
     observation_buffer = Array{T}(undef, n_observations, nthreads())
@@ -618,7 +641,7 @@ function ParticleDA.update_state_stochastic!(
     # Add state noise
     add_random_field!(
         flat_state_to_fields(state, model.model_params),
-        view(model.field_buffer, :, :, 1, threadid()),
+        view(model.field_buffer, :, :, :, threadid()),
         model.state_noise_grf,
         model.model_params.observed_state_var_indices,
         rng,
