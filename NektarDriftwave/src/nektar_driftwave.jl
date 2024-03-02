@@ -337,16 +337,17 @@ end
 function generate_gaussian_random_field_file(model, task_index, variable, noise_scale, mean_expression=nothing)
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     grf_field_file_path = get_field_file_path(conditions_file_paths.grf)
-    field_expression_string = 
+    variable_field_path = joinpath(model.task_working_directories[task_index], "$(variable).fld")
     if isnothing(mean_expression)
         field_expression_string = "$(noise_scale) * u"
     else
         field_expression_string = "$(mean_expression) + $(noise_scale) * u"
     end
-    run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.grf) $(model.mesh_file_paths.no_expansions)`)
-    variable_field_path = joinpath(model.task_working_directories[task_index], "$(variable).fld")
-    run(`$(model.executable_paths.field_convert) -f -m fieldfromstring:fieldstr="$(field_expression_string)":fieldname="$(variable)" $(model.mesh_file_paths.with_expansions) $(grf_field_file_path) $(variable_field_path):fld:format=Hdf5`)
-    run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(variable_field_path) $(variable_field_path):fld:format=Hdf5`)
+    cd(model.task_working_directories[task_index]) do
+        run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.grf) $(model.mesh_file_paths.no_expansions)`)
+        run(`$(model.executable_paths.field_convert) -f -m fieldfromstring:fieldstr="$(field_expression_string)":fieldname="$(variable)" $(model.mesh_file_paths.with_expansions) $(grf_field_file_path) $(variable_field_path):fld:format=Hdf5`)
+        run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(variable_field_path) $(variable_field_path):fld:format=Hdf5`)
+    end
     return variable_field_path
 end
 
@@ -362,10 +363,12 @@ function update_phi(model, task_index)
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     poisson_field_file_path = get_field_file_path(conditions_file_paths.poisson)
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
-    run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.poisson) $(model.mesh_file_paths.no_expansions)`)
-    run(`$(model.executable_paths.field_convert) -f $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(poisson_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
-    run(`$(model.executable_paths.field_convert) -f -m fieldfromstring:fieldstr="u":fieldname="phi" $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
-    run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
+    cd(model.task_working_directories[task_index]) do
+        run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.poisson) $(model.mesh_file_paths.no_expansions)`)
+        run(`$(model.executable_paths.field_convert) -f $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(poisson_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
+        run(`$(model.executable_paths.field_convert) -f -m fieldfromstring:fieldstr="u":fieldname="phi" $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
+        run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
+    end
 end
 
 function check_fields(field_file)
@@ -390,13 +393,14 @@ end
 
 function interpolate_field_at_observed_points(model, task_index, field_file_path)
     interpolated_field_file_path = joinpath(model.task_working_directories[task_index], "interpolated_field.csv")
-    run(`$(model.executable_paths.field_convert) -f -m interppoints:fromxml=$(model.mesh_file_paths.with_expansions):fromfld=$(field_file_path):topts=$(model.observed_points_file_path) $(interpolated_field_file_path)`)
+    cd(model.task_working_directories[task_index]) do
+        run(`$(model.executable_paths.field_convert) -f -m interppoints:fromxml=$(model.mesh_file_paths.with_expansions):fromfld=$(field_file_path):topts=$(model.observed_points_file_path) $(interpolated_field_file_path)`)
+    end
     interpolated_field_data = CSV.File(interpolated_field_file_path; select=(i, name) -> String(name) in model.parameters.observed_variables)
     return Tables.matrix(interpolated_field_data)
 end
 
 function distribution_observation_given_state(state, model, task_index)
-    cd(model.task_working_directories[task_index])
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
     write_state_to_field_file(driftwave_field_file_path, state)
@@ -463,7 +467,6 @@ function ParticleDA.sample_initial_state!(
 ) where {S, T}
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
-    cd(model.task_working_directories[task_index])
     variable_mean_expressions = [
         "zeta" => "4*exp((-x*x-y*y)/($(model.parameters.s^2)))*(-$(model.parameters.s^2)+x*x+y*y)/$(model.parameters.s^4)",
         "n" => "exp((-x*x-y*y)/$(model.parameters.s^2))",
@@ -485,11 +488,12 @@ function ParticleDA.update_state_deterministic!(
     time_index::Integer,
     task_index::Integer=1
 ) where {S, T}
-    cd(model.task_working_directories[task_index])
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
     write_state_to_field_file(driftwave_field_file_path, state)
-    run(`$(model.executable_paths.driftwave_solver) -f -i Hdf5 $(conditions_file_paths.driftwave) $(model.mesh_file_paths.no_expansions)`)
+    cd(model.task_working_directories[task_index]) do
+        run(`$(model.executable_paths.driftwave_solver) -f -i Hdf5 $(conditions_file_paths.driftwave) $(model.mesh_file_paths.no_expansions)`)
+    end
     read_state_from_field_file!(state, driftwave_field_file_path)
 end
 
@@ -499,7 +503,6 @@ function ParticleDA.update_state_stochastic!(
     rng::Random.AbstractRNG,
     task_index::Integer=1
 ) where {S, T}
-    cd(model.task_working_directories[task_index])
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
     noise_field_file_path = joinpath(model.task_working_directories[task_index], "noise.fld")
