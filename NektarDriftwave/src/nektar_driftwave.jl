@@ -117,168 +117,253 @@ function make_mesh_files(parameters, output_directory, nek_mesh_path)
     return MeshFilePaths(mesh_file_path, mesh_no_expansions_file_path)
 end
 
+collections_element() = XML.Element("COLLECTIONS"; DEFAULT="auto")
+
+function expansions_element(variables, num_modes=4, composite="C[0]", type="MODIFIED")
+    return XML.Element(
+        "EXPANSIONS", 
+        XML.Element(
+            "E";
+            COMPOSITE=composite,
+            NUMMODES=string(num_modes),
+            TYPE=type,
+            FIELDS=join(variables, ",")
+        )
+    )
+end
+
+function solver_info_element(properties)
+    return XML.Element(
+        "SOLVERINFO",
+        (XML.Element("I"; PROPERTY=p, VALUE=v) for (p, v) in pairs(properties))...
+    )
+end
+
+function parameters_element(parameters)
+    return XML.Element(
+        "PARAMETERS",
+        (XML.Element("P", XML.Text("$p = $v")) for (p, v) in pairs(parameters))...
+    )
+end
+
+function variables_element(variables)
+    return XML.Element(
+        "VARIABLES",
+        (XML.Element("V", XML.Text(v); ID=string(i - 1)) for (i, v) in enumerate(variables))...
+    )
+end
+
+function boundary_regions_element(boundary_regions)
+    return XML.Element(
+        "BOUNDARYREGIONS",
+        (XML.Element("B", XML.Text(r); ID=string(i - 1)) for (i, r) in enumerate(boundary_regions))...
+    )
+end
+
+abstract type AbstractVariableBoundaryCondition end
+    
+struct PeriodicVariableBoundaryCondition <: AbstractVariableBoundaryCondition
+    variable::String
+    with_region_id::Int
+end
+
+struct DirichletVariableBoundaryCondition <: AbstractVariableBoundaryCondition
+    variable::String
+    value::String
+end
+
+struct NeumannVariableBoundaryCondition <: AbstractVariableBoundaryCondition
+    variable::String
+    value::String
+end
+
+struct BoundaryCondition
+    composite::String
+    variable_boundary_conditions::Vector{AbstractVariableBoundaryCondition}
+end
+
+variable_boundary_condition_element(vbc::PeriodicVariableBoundaryCondition) = XML.Element(
+    "P"; VAR=vbc.variable, VALUE="[$(vbc.with_region_id - 1)]"
+)
+
+variable_boundary_condition_element(vbc::DirichletVariableBoundaryCondition) = XML.Element(
+    "D"; VAR=vbc.variable, VALUE=vbc.value
+)
+
+variable_boundary_condition_element(vbc::NeumannVariableBoundaryCondition) = XML.Element(
+    "N"; VAR=vbc.variable, VALUE=vbc.value
+)
+
+function region_boundary_condition_element(region_boundary_condition, id)
+    return XML.Element(
+        "REGION",
+        (
+            variable_boundary_condition_element(vbc) 
+            for vbc in region_boundary_condition.variable_boundary_conditions
+        )...;
+        REF=string(id - 1),
+    ) 
+end
+
+function boundary_conditions_element(region_boundary_conditions)
+    return XML.Element(
+        "BOUNDARYCONDITIONS",
+        (
+            region_boundary_condition_element(rbc, i) 
+            for (i, rbc) in enumerate(region_boundary_conditions)
+        )...
+    ) 
+end
+
+abstract type AbstractFieldDefinition end
+    
+struct ExpressionFieldDefinition <: AbstractFieldDefinition
+    variables::String
+    expression::String
+end
+
+struct FileFieldDefinition <: AbstractFieldDefinition
+    variables::String
+    file::String
+end
+
+struct FieldFunction{T <: AbstractFieldDefinition}
+    name::String 
+    field_definitions::Vector{T}
+end
+
+field_definition_element(f::FileFieldDefinition) = XML.Element("F"; VAR=f.variables, FILE=f.file)
+field_definition_element(f::ExpressionFieldDefinition) = XML.Element("E"; VAR=f.variables, VALUE=f.expression)
+
+function function_element(field_function::FieldFunction)
+    return XML.Element(
+        "FUNCTION",
+        (field_definition_element(f) for f in field_function.field_definitions)...;
+        NAME=field_function.name
+    )
+end
+
+function conditions_element(
+    solver_properties, parameters, variables, boundary_conditions, functions
+)
+    return XML.Element(
+        "CONDITIONS",
+        solver_info_element(solver_properties),
+        parameters_element(parameters),
+        variables_element(variables),
+        boundary_regions_element((bc.composite for bc in boundary_conditions)),
+        boundary_conditions_element(boundary_conditions),
+        (function_element(func) for func in functions)...
+    )
+end
+
+function nektar_element(
+    variables, num_modes, solver_properties, parameters, boundary_conditions, functions
+)
+    return XML.Element(
+        "NEKTAR",
+        collections_element(),
+        expansions_element(variables, num_modes),
+        conditions_element(
+            solver_properties, parameters, variables, boundary_conditions, functions
+        )
+    )
+end
+
+function make_nektar_conditions_file(
+    output_path; variables, num_modes, solver_properties, parameters, boundary_conditions, functions
+)
+    document = XML.Document(
+        XML.Declaration(; version="1.0", encoding="utf-8"),
+        nektar_element(
+            variables, num_modes, solver_properties, parameters, boundary_conditions, functions,
+        )
+    )
+    XML.write(output_path, document)
+end
+
+function periodic_boundary_conditions(variables)
+    return [
+        BoundaryCondition("C[1]", [PeriodicVariableBoundaryCondition(v, 3) for v in variables]),
+        BoundaryCondition("C[2]", [PeriodicVariableBoundaryCondition(v, 4) for v in variables]),
+        BoundaryCondition("C[3]", [PeriodicVariableBoundaryCondition(v, 1) for v in variables]),
+        BoundaryCondition("C[4]", [PeriodicVariableBoundaryCondition(v, 2) for v in variables])
+    ]
+end
+
 function make_driftwave_conditions_file(output_path, previous_state_path, parameters)
-    xml_content = """
-    <?xml version="1.0" encoding="utf-8" ?>
-    <NEKTAR>
-        <COLLECTIONS DEFAULT="auto" />
-        <EXPANSIONS>
-            <E COMPOSITE="C[0]" NUMMODES="$(parameters.num_modes)" TYPE="MODIFIED" FIELDS="zeta,n,phi" />
-        </EXPANSIONS>
-        <CONDITIONS>
-            <SOLVERINFO>
-                <I PROPERTY="EQTYPE" VALUE="DriftWaveSystem" />
-                <I PROPERTY="Projection" VALUE="DisContinuous" />
-                <I PROPERTY="TimeIntegrationMethod" VALUE="ClassicalRungeKutta4" />
-            </SOLVERINFO>
-            <PARAMETERS>
-                <P> NumSteps = $(parameters.num_steps_per_observation_time) </P>
-                <P> TimeStep = $(parameters.time_step) </P>
-                <P> IO_InfoSteps = 0 </P>
-                <P> IO_CheckSteps = 0 </P>
-                <P> s = $(parameters.s) </P>
-                <P> kappa = $(parameters.kappa) </P>
-                <P> alpha = $(parameters.alpha) </P>
-            </PARAMETERS>
-            <VARIABLES>
-                <V ID="0"> zeta </V>
-                <V ID="1"> n </V>
-                <V ID="2"> phi </V>
-            </VARIABLES>
-            <BOUNDARYREGIONS>
-                <B ID="0"> C[1] </B>
-                <B ID="1"> C[2] </B>
-                <B ID="2"> C[3] </B>
-                <B ID="3"> C[4] </B>
-            </BOUNDARYREGIONS>
-            <BOUNDARYCONDITIONS>
-                <REGION REF="0">
-                    <P VAR="zeta" VALUE="[2]" />
-                    <P VAR="n"    VALUE="[2]" />
-                    <P VAR="phi"  VALUE="[2]" />
-                </REGION>
-                <REGION REF="1">
-                    <P VAR="zeta" VALUE="[3]" />
-                    <P VAR="n"    VALUE="[3]" />
-                    <P VAR="phi"  VALUE="[3]" />
-                </REGION>
-                <REGION REF="2">
-                    <P VAR="zeta" VALUE="[0]" />
-                    <P VAR="n"    VALUE="[0]" />
-                    <P VAR="phi"  VALUE="[0]" />
-                </REGION>
-                <REGION REF="3">
-                    <P VAR="zeta" VALUE="[1]" />
-                    <P VAR="n"    VALUE="[1]" />
-                    <P VAR="phi"  VALUE="[1]" />
-                </REGION>
-            </BOUNDARYCONDITIONS>
-            <FUNCTION NAME="InitialConditions">
-                <F VAR="n,zeta,phi" FILE="$(previous_state_path)" />
-            </FUNCTION>
-        </CONDITIONS>
-    </NEKTAR>    
-    """
-    open(output_path, "w") do f
-        write(f, xml_content)
-    end
+    variables = ["zeta", "n", "phi"]
+    make_nektar_conditions_file(
+        output_path,
+        variables=variables,
+        num_modes=parameters.num_modes,
+        solver_properties=(; 
+            EQTYPE = "DriftWaveSystem",
+            Projection = "DisContinuous",
+            TimeIntegrationMethod = "ClassicalRungeKutta4",
+        ),
+        parameters=(; 
+            NumSteps = parameters.num_steps_per_observation_time,
+            TimeStep = parameters.time_step,
+            s = parameters.s,
+            kappa = parameters.kappa,
+            alpha = parameters.alpha,
+            IO_InfoSteps = 0,
+            IO_CheckSteps = 0,
+        ),
+        boundary_conditions=periodic_boundary_conditions(variables),
+        functions=[
+            FieldFunction(
+                "InitialConditions", 
+                [FileFieldDefinition(join(variables, ","), previous_state_path)]
+            )
+        ]
+    )
 end
 
 function make_grf_conditions_file(output_path, parameters)
-    xml_content = """
-    <NEKTAR>
-        <COLLECTIONS DEFAULT="auto" />
-        <EXPANSIONS>
-            <E COMPOSITE="C[0]" NUMMODES="$(parameters.num_modes)" TYPE="MODIFIED" FIELDS="u" />
-        </EXPANSIONS>
-        <CONDITIONS>
-            <SOLVERINFO>
-                <I PROPERTY="EQTYPE" VALUE="Helmholtz" />
-                <I PROPERTY="Projection" VALUE="DisContinuous" />
-            </SOLVERINFO>
-            <PARAMETERS>
-                <P> lambda = $(parameters.lambda) </P>
-            </PARAMETERS>
-            <VARIABLES>
-                <V ID="0"> u </V>
-            </VARIABLES>
-            <BOUNDARYREGIONS>
-                <B ID="0"> C[1] </B>
-                <B ID="1"> C[2] </B>
-                <B ID="2"> C[3] </B>
-                <B ID="3"> C[4] </B>
-            </BOUNDARYREGIONS>
-            <BOUNDARYCONDITIONS>
-                <REGION REF="0">
-                    <P VAR="u" VALUE="[2]" />
-                </REGION>
-                <REGION REF="1">
-                    <P VAR="u" VALUE="[3]" />
-                </REGION>
-                <REGION REF="2">
-                    <P VAR="u" VALUE="[0]" />
-                </REGION>
-                <REGION REF="3">
-                    <P VAR="u" VALUE="[1]" />
-                </REGION>
-            </BOUNDARYCONDITIONS>
-            <FUNCTION NAME="Forcing">
-                <E VAR="u" VALUE="awgn(1)" />
-            </FUNCTION>
-        </CONDITIONS>
-    </NEKTAR>
-    """
-    open(output_path, "w") do f
-        write(f, xml_content)
-    end
+    variables = ["u"]
+    make_nektar_conditions_file(
+        output_path,
+        variables=variables,
+        num_modes=parameters.num_modes,
+        solver_properties=(; 
+            EQTYPE = "Helmholtz",
+            Projection = "DisContinuous",
+        ),
+        parameters=(; 
+            lambda = parameters.lambda,
+        ),
+        boundary_conditions=periodic_boundary_conditions(variables),
+        functions=[
+            FieldFunction(
+                "Forcing", 
+                [ExpressionFieldDefinition(join(variables, ","), "awgn(1)")]
+            )
+        ]
+    )
 end
 
 function make_poisson_conditions_file(output_path, forcing_field_path, parameters)
     # TODO: Identify why we get numerical issues when using discontinuous projection
-    xml_content = """
-    <NEKTAR>
-        <COLLECTIONS DEFAULT="auto" />
-        <EXPANSIONS>
-            <E COMPOSITE="C[0]" NUMMODES="$(parameters.num_modes)" TYPE="MODIFIED" FIELDS="u" />
-        </EXPANSIONS>
-        <CONDITIONS>
-            <SOLVERINFO>
-                <I PROPERTY="EQTYPE" VALUE="Poisson" />
-                <I PROPERTY="Projection" VALUE="Continuous" />
-            </SOLVERINFO>
-            <PARAMETERS> </PARAMETERS>
-            <VARIABLES>
-                <V ID="0"> u </V>
-            </VARIABLES>
-            <BOUNDARYREGIONS>
-                <B ID="0"> C[1] </B>
-                <B ID="1"> C[2] </B>
-                <B ID="2"> C[3] </B>
-                <B ID="3"> C[4] </B>
-            </BOUNDARYREGIONS>
-            <BOUNDARYCONDITIONS>
-                <REGION REF="0">
-                    <P VAR="u" VALUE="[2]" />
-                </REGION>
-                <REGION REF="1">
-                    <P VAR="u" VALUE="[3]" />
-                </REGION>
-                <REGION REF="2">
-                    <P VAR="u" VALUE="[0]" />
-                </REGION>
-                <REGION REF="3">
-                    <P VAR="u" VALUE="[1]" />
-                </REGION>
-            </BOUNDARYCONDITIONS>
-            <FUNCTION NAME="Forcing">
-                <F VAR="u" FILE="$(forcing_field_path)" />
-            </FUNCTION>
-        </CONDITIONS>
-    </NEKTAR>
-    """
-    open(output_path, "w") do f
-        write(f, xml_content)
-    end
+    variables = ["u"]
+    make_nektar_conditions_file(
+        output_path,
+        variables=variables,
+        num_modes=parameters.num_modes,
+        solver_properties=(; 
+            EQTYPE = "Poisson",
+            Projection = "Continuous",
+        ),
+        parameters=(;),
+        boundary_conditions=periodic_boundary_conditions(variables),
+        functions=[
+            FieldFunction(
+                "Forcing", 
+                [FileFieldDefinition(join(variables, ","), forcing_field_path)]
+            )
+        ]
+    )
 end
 
 struct NektarExecutablePaths
