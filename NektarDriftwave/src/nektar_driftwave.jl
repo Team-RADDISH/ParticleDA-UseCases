@@ -551,4 +551,27 @@ function ParticleDA.write_model_metadata(file::HDF5.File, model::NektarDriftwave
     end
 end
 
+function ParticleDA.write_state(
+    file::HDF5.File,
+    state::AbstractVector,
+    time_index::Int,
+    group_name::String,
+    model
+)
+    time_stamp = ParticleDA.time_index_to_hdf5_key(time_index)
+    group, _ = ParticleDA.create_or_open_group(file, group_name)
+    conditions_file_paths = model.task_conditions_file_paths[1]
+    driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
+    h5open(driftwave_field_file_path, "r+") do field_file
+        check_fields(field_file)
+        field_file["NEKTAR"]["DATA"][:] = state
+        if !haskey(group, time_stamp)
+            time_stamp_group = create_group(group, time_stamp)
+            copy_object(field_file["NEKTAR"], time_stamp_group, "NEKTAR")
+        else
+            @warn "Write failed, timestamp $time_stamp already exists in $group"
+        end
+    end
+end
+
 end
