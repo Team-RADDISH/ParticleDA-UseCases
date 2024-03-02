@@ -369,14 +369,22 @@ function update_phi(model, task_index)
     run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(driftwave_field_file_path) $(driftwave_field_file_path):fld:format=Hdf5`)
 end
 
+function check_fields(field_file)
+    field_info_keys = setdiff(keys(field_file["NEKTAR"]), ["DATA", "DECOMPOSITION", "ELEMENTIDS", "Metadata"])
+    @assert length(field_info_keys) == 1 "Multiple field information groups present in HDF5 file"
+    @assert read_attribute(field_file["NEKTAR"][field_info_keys[1]], "FIELDS") == ["zeta", "n", "phi"] "Field variables in unexpected order"
+end
+
 function write_state_to_field_file(field_file_path, state)
     h5open(field_file_path, "r+") do field_file
+        check_fields(field_file)
         field_file["NEKTAR"]["DATA"][:] = state
     end
 end
 
 function read_state_from_field_file!(state, field_file_path)
     h5open(field_file_path, "r") do field_file
+        check_fields(field_file)
         state .= field_file["NEKTAR"]["DATA"][:]
     end    
 end
@@ -457,15 +465,15 @@ function ParticleDA.sample_initial_state!(
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
     cd(model.task_working_directories[task_index])
-    variable_mean_expressions = Dict(
-        "n" => "exp((-x*x-y*y)/$(model.parameters.s^2))",
+    variable_mean_expressions = [
         "zeta" => "4*exp((-x*x-y*y)/($(model.parameters.s^2)))*(-$(model.parameters.s^2)+x*x+y*y)/$(model.parameters.s^4)",
-    )
+        "n" => "exp((-x*x-y*y)/$(model.parameters.s^2))",
+    ]
     variable_field_file_paths = [
         generate_gaussian_random_field_file(
             model, task_index, variable, model.parameters.initial_state_scale, mean_expression
         )
-        for (variable, mean_expression) in pairs(variable_mean_expressions)
+        for (variable, mean_expression) in variable_mean_expressions
     ]
     concatenate_fields(model, variable_field_file_paths, driftwave_field_file_path)
     update_phi(model, task_index)
@@ -501,7 +509,7 @@ function ParticleDA.update_state_stochastic!(
         generate_gaussian_random_field_file(
             model, task_index, variable, model.parameters.state_noise_scale
         )
-        for variable in ["n", "zeta"]
+        for variable in ["zeta", "n"]
     ]
     concatenate_fields(model, variable_field_file_paths, noise_field_file_path)
     add_fields(model, driftwave_field_file_path, noise_field_file_path, driftwave_field_file_path)
