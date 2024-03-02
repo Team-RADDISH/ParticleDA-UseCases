@@ -1,7 +1,6 @@
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
-FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
 Gmsh = "705231aa-382f-11e9-3f0c-b7cb4346fdeb"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"

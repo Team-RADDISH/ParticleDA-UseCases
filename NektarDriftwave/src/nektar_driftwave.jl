@@ -10,7 +10,6 @@ module NektarDriftwave
 
 using Base.Threads
 using Distributions
-using FillArrays
 using HDF5
 using Random
 using PDMats
@@ -432,7 +431,7 @@ function init(
     end
     observation_dimension = length(parameters.observed_points)
     observation_noise_distribution = MvNormal(
-        Zeros{T}(observation_dimension),
+        zeros(T, observation_dimension),
         ScalMat(observation_dimension, parameters.observation_noise_std^2)
     )
     return NektarDriftwaveModel(
