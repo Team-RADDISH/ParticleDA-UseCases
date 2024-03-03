@@ -29,14 +29,10 @@ Base.@kwdef struct NektarDriftwaveModelParameters{S <: Real, T <: Real}
     nektar_bin_directory::String = ""
     "Path to directory containing DriftWaveSolver binary"  
     driftwave_solver_bin_directory::String = ""
-    "Hasegawa-Wakatani system parameter α"
+    "Hasegawa-Wakatani system parameter α - adiabiacity operator"
     alpha::S = 2.
-    "Hasegawa-Wakatani system parameter κ"
+    "Hasegawa-Wakatani system parameter κ - background density gradient scale-length"
     kappa::S = 1.
-    "Lengthscale parameter for bump function used for initial field means"
-    s::S = 2.
-    "Lengthscale parameter for state noise in dynamics and initialisation"
-    lambda::S = 0.1
     "Number of quadrilateral elements along each axis in mesh"
     mesh_dims::Vector{Int} = [32, 32]
     "Size (extents) of rectangular spatial domain mesh is defined on"
@@ -52,13 +48,19 @@ Base.@kwdef struct NektarDriftwaveModelParameters{S <: Real, T <: Real}
         collect, vec(collect(Iterators.product(-10.:10.:10., -10.:10.:10.)))
     )
     "Which of field variables are observed (subset of {phi, zeta, n})"
-    observed_variables::Vector{String} = ["phi"]
-    "Output scale parameter for initial state field Gaussian process"
-    initial_state_scale::Union{S, Vector{S}} = 0.05
-    "Output scale parameter for additive state noise fields Gaussian process"
-    state_noise_scale::Union{S, Vector{S}} = 0.05
+    observed_variables::Vector{String} = ["zeta"]
     "Scale parameter (standard deviation) of independent Gaussian noise in observations"
-    observation_noise_std::Union{T, Vector{T}} = 0.1
+    observation_noise_std::T = 0.1
+    "Length scale parameter for Gaussian random fields used for state noise and initialisation"
+    state_grf_length_scale::S = 1.
+    "Positive integer smoothness parameter for Gaussian random fields used for state noise and initialisation"
+    state_grf_smoothness::Int = 2
+    "Output scale parameter for initial state Gaussian random field"
+    initial_state_grf_output_scale::S = 0.05
+    "Output scale parameter for additive state noise Gaussian random field"
+    state_noise_grf_output_scale::S = 0.05
+    "Length scale parameter for bump functions used for initial state field means"
+    initial_state_mean_length_scale::S = 2.
 end
 
 function get_params(
@@ -305,7 +307,6 @@ function make_driftwave_conditions_file(output_path, previous_state_path, parame
         parameters=(; 
             NumSteps = parameters.num_steps_per_observation_time,
             TimeStep = parameters.time_step,
-            s = parameters.s,
             kappa = parameters.kappa,
             alpha = parameters.alpha,
             IO_InfoSteps = 0,
@@ -321,26 +322,21 @@ function make_driftwave_conditions_file(output_path, previous_state_path, parame
     )
 end
 
-function make_grf_conditions_file(output_path, parameters)
+function make_helmholtz_conditions_file(output_path, forcing_field_path, parameters)
     variables = ["u"]
+    forcing_field_definition = (
+        isnothing(forcing_field_path) 
+        ? ExpressionFieldDefinition(only(variables), "awgn(1)")
+        : FileFieldDefinition(only(variables), forcing_field_path) 
+    )
     make_nektar_conditions_file(
         output_path,
         variables=variables,
         num_modes=parameters.num_modes,
-        solver_properties=(; 
-            EQTYPE = "Helmholtz",
-            Projection = "DisContinuous",
-        ),
-        parameters=(; 
-            lambda = parameters.lambda,
-        ),
+        solver_properties=(; EQTYPE = "Helmholtz", Projection = "Continuous"),
+        parameters=(; lambda = 1 / parameters.state_grf_length_scale^2),
         boundary_conditions=periodic_boundary_conditions(variables),
-        functions=[
-            FieldFunction(
-                "Forcing", 
-                [ExpressionFieldDefinition(join(variables, ","), "awgn(1)")]
-            )
-        ]
+        functions=[FieldFunction("Forcing", [forcing_field_definition])]
     )
 end
 
@@ -351,16 +347,12 @@ function make_poisson_conditions_file(output_path, forcing_field_path, parameter
         output_path,
         variables=variables,
         num_modes=parameters.num_modes,
-        solver_properties=(; 
-            EQTYPE = "Poisson",
-            Projection = "Continuous",
-        ),
+        solver_properties=(; EQTYPE = "Poisson", Projection = "Continuous"),
         parameters=(;),
         boundary_conditions=periodic_boundary_conditions(variables),
         functions=[
             FieldFunction(
-                "Forcing", 
-                [FileFieldDefinition(join(variables, ","), forcing_field_path)]
+                "Forcing", [FileFieldDefinition(only(variables), forcing_field_path)]
             )
         ]
     )
@@ -385,6 +377,7 @@ end
 struct NektarConditionsFilePaths
     driftwave::String
     grf::String
+    grf_recursion::String
     poisson::String
 end
 
@@ -392,6 +385,7 @@ function NektarConditionsFilePaths(parent_directory::String)
     return NektarConditionsFilePaths(
         joinpath(parent_directory, "driftwave.xml"),
         joinpath(parent_directory, "grf.xml"),
+        joinpath(parent_directory, "grf_recursion.xml"),
         joinpath(parent_directory, "poisson.xml")
     )
 end
@@ -422,7 +416,15 @@ end
 function generate_gaussian_random_field_file(model, task_index, variable, noise_scale, mean_expression=nothing)
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     grf_field_file_path = get_field_file_path(conditions_file_paths.grf)
+    grf_recursion_field_file_path = get_field_file_path(conditions_file_paths.grf_recursion)
     variable_field_path = joinpath(model.task_working_directories[task_index], "$(variable).fld")
+    # Whittle-Matérn Gaussian random field variance for spatial dimension 2 is 
+    # Γ(ν) / (Γ(ν + 1) * κ^2ν * 4π) = 1 / (ν * κ^2ν * 4π)
+    # Therefore multiply noise_scale by sqrt(ν * κ^2ν * 4π) so that noise_scale = 1
+    # corresponds to unit variance
+    ν = model.parameters.state_grf_smoothness * 2 - 1
+    κ = 1 / model.parameters.state_grf_length_scale
+    noise_scale *= sqrt(ν * κ^2ν * 4π)
     if isnothing(mean_expression)
         field_expression_string = "$(noise_scale) * u"
     else
@@ -430,6 +432,10 @@ function generate_gaussian_random_field_file(model, task_index, variable, noise_
     end
     cd(model.task_working_directories[task_index]) do
         run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.grf) $(model.mesh_file_paths.no_expansions)`)
+        for i in 1:(model.parameters.state_grf_smoothness - 1)
+            run(`$(model.executable_paths.adr_solver) -f -i Hdf5 $(conditions_file_paths.grf_recursion) $(model.mesh_file_paths.no_expansions)`)
+            mv(grf_recursion_field_file_path, grf_field_file_path; force=true)
+        end
         run(`$(model.executable_paths.field_convert) -f -m fieldfromstring:fieldstr="$(field_expression_string)":fieldname="$(variable)" $(model.mesh_file_paths.with_expansions) $(grf_field_file_path) $(variable_field_path):fld:format=Hdf5`)
         run(`$(model.executable_paths.field_convert) -f -m removefield:fieldname="u" $(model.mesh_file_paths.with_expansions) $(variable_field_path) $(variable_field_path):fld:format=Hdf5`)
     end
@@ -514,8 +520,10 @@ function init(
     for (task_working_directory, conditions_file_paths) in zip(task_working_directories, task_conditions_file_paths)
         mkdir(task_working_directory)
         driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
+        grf_field_file_path = get_field_file_path(conditions_file_paths.grf)
         make_driftwave_conditions_file(conditions_file_paths.driftwave, driftwave_field_file_path, parameters)
-        make_grf_conditions_file(conditions_file_paths.grf, parameters)
+        make_helmholtz_conditions_file(conditions_file_paths.grf, nothing, parameters)
+        make_helmholtz_conditions_file(conditions_file_paths.grf_recursion, grf_field_file_path, parameters)
         make_poisson_conditions_file(conditions_file_paths.poisson, "$(driftwave_field_file_path):zeta", parameters)
     end
     observation_dimension = length(parameters.observed_points)
@@ -552,13 +560,14 @@ function ParticleDA.sample_initial_state!(
 ) where {S, T}
     conditions_file_paths = model.task_conditions_file_paths[task_index]
     driftwave_field_file_path = get_field_file_path(conditions_file_paths.driftwave)
+    s = model.parameters.initial_state_mean_length_scale
     variable_mean_expressions = [
-        "zeta" => "4*exp((-x*x-y*y)/($(model.parameters.s^2)))*(-$(model.parameters.s^2)+x*x+y*y)/$(model.parameters.s^4)",
-        "n" => "exp((-x*x-y*y)/$(model.parameters.s^2))",
+        "zeta" => "4*exp((-x*x-y*y)/($(s^2)))*(-$(s^2)+x*x+y*y)/$(s^4)",
+        "n" => "exp((-x*x-y*y)/$(s^2))",
     ]
     variable_field_file_paths = [
         generate_gaussian_random_field_file(
-            model, task_index, variable, model.parameters.initial_state_scale, mean_expression
+            model, task_index, variable, model.parameters.initial_state_grf_output_scale, mean_expression
         )
         for (variable, mean_expression) in variable_mean_expressions
     ]
@@ -594,7 +603,7 @@ function ParticleDA.update_state_stochastic!(
     write_state_to_field_file(driftwave_field_file_path, state)
     variable_field_file_paths = [
         generate_gaussian_random_field_file(
-            model, task_index, variable, model.parameters.state_noise_scale
+            model, task_index, variable, model.parameters.state_noise_grf_output_scale
         )
         for variable in ["zeta", "n"]
     ]
