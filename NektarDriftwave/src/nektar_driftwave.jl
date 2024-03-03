@@ -638,8 +638,8 @@ function ParticleDA.write_model_metadata(file::HDF5.File, model::NektarDriftwave
         group = create_group(file, group_name)
         for field in fieldnames(typeof(model.parameters))
             value = getfield(model.parameters, field)
-            attributes(group)[string(field)] = (
-                isa(value, AbstractVector) ? collect(value) : value
+            HDF5.attributes(group)[string(field)] = (
+                isa(value, Vector{Vector{Float64}}) ? hcat(value...)' : value
             )
         end
     else
