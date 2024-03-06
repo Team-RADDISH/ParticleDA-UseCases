@@ -499,6 +499,20 @@ function distribution_observation_given_state(state, model, task_index)
     return field_at_observed_points[:] + model.observation_noise_distribution
 end
 
+function generate_paraview_vtu_stack(results_file, group_key, model, output_directory)
+    state_group = results_file[group_key]
+    time_keys = sort(keys(state_group), by=ParticleDA.hdf5_key_to_time_index)
+    working_directory = model.root_working_directory
+    for time_key in time_keys
+        input_file_path = joinpath(working_directory, "$(group_key)_$(time_key).fld")
+        output_file_path = joinpath(output_directory, "$(group_key)_$(time_key).vtu")
+        h5open(input_file_path, "w") do file
+            copy_object(state_group[time_key]["NEKTAR"], file, "NEKTAR")
+        end
+        run(`$(model.executable_paths.field_convert) $(model.mesh_file_paths.with_expansions) $(input_file_path) $(output_file_path)`)
+    end
+end
+
 function init(
     parameters_dict::Dict,
     n_tasks::Int=1;
