@@ -3,7 +3,7 @@
 Deterministic dynamics solve two-dimensional Hasegawa-Wakatani equations with spatially
 correlated additive state noise simulated by solving a Helmholtz equation driven by
 a Gaussian white noise process. System is simulated on a rectangular spatial domain with
-periodic boundary conditions, and a regular quadrilaterial mesh using Nektar++ spectral
+periodic boundary conditions, and a regular quadrilateral mesh using Nektar++ spectral
 element method implementation.
 """
 module NektarDriftwave
@@ -39,9 +39,9 @@ Base.@kwdef struct NektarDriftwaveModelParameters{S <: Real, T <: Real}
     mesh_size::Vector{Float64} = [40., 40.]
     "Number of modes in expansion (one higher than the polynomial order)"
     num_modes::Int = 4
-    "Time step for numerical integraton in time"
+    "Time step for numerical integration in time"
     time_step::S = 0.0005
-    "Number of time integrations steps to perform between each observation of state"
+    "Number of time integration steps to perform between each observation of state"
     num_steps_per_observation_time::Int = 1000
     "Points at which state is observed in two-dimensional spatial domain"
     observed_points::Vector{Vector{Float64}} = map(
