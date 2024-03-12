@@ -22,7 +22,8 @@ To install the `NektarDriftwave` package and its dependencies from a Julia REPL 
 ```Julia
 using Pkg
 Pkg.add(
-    url="https://github.com/Team-RADDISH/ParticleDA-UseCases",subdir="NektarDriftwave"
+    url="https://github.com/Team-RADDISH/ParticleDA-UseCases",
+    subdir="NektarDriftwave"
 )
 ```
 
