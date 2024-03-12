@@ -17,10 +17,13 @@ The example requires the following to be installed:
 
 ## Installation
 
-To install the `NektarDriftwave` package and its dependencies in a Julia environment run
+To install the `NektarDriftwave` package and its dependencies from a Julia REPL run
 
-```
-julia `using Pkg; Pkg.add(url="https://github.com/Team-RADDISH/ParticleDA-UseCases", subdir="NektarDriftwave")`
+```Julia
+using Pkg
+Pkg.add(
+    url="https://github.com/Team-RADDISH/ParticleDA-UseCases",subdir="NektarDriftwave"
+)
 ```
 
 ## Known issues
