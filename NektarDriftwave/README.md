@@ -17,10 +17,10 @@ The example requires the following to be installed:
 
 ## Installation
 
-To set up a Julia environment with all the direct Julia dependencies for the example installed, from the `NektarDriftwave` directory in a local clone of this repository run
+To install the `NektarDriftwave` package and its dependencies in a Julia environment run
 
 ```
-julia --project=. -e `using Pkg; Pkg.instantiate()`
+julia `using Pkg; Pkg.add(url="https://github.com/Team-RADDISH/ParticleDA-UseCases", subdir="NektarDriftwave")`
 ```
 
 ## Known issues
@@ -77,8 +77,6 @@ The `NektarDriftwaveModelParameters` struct exposes various parameters which can
 
 ## Example usage
 
-In the following examples it is assumed the working directory is the `NektarDriftwave` directory (that this README file is contained in) so that `src/nektar_driftwave.jl` is a relative path to the model wrapper source file.
-
 ### Simulating from model
 
 To generate a simulated observation sequence from the model we can use the [`simulated_observations_from_model` function](https://team-raddish.github.io/ParticleDA.jl/stable/#ParticleDA.simulate_observations_from_model) exported by `ParticleDA`. We need to initialise an instance of the model using the `init` method specified in the `NektarDriftwave` module, passing in a dictionary of any model parameters we wish to adjust from their default values - in most cases this will include setting the parameters `nektar_bin_directory` and `driftwave_solver_bin_directory` to point to the system specific directories in which the built Nektar++ and `nektar-driftwave` binaries can be found. The code example below simulates the model for 100 (equispaced) observation times, writing the resulting simulated observation sequence to a HDF5 file `observations.h5` in the current working directory.
@@ -86,8 +84,7 @@ To generate a simulated observation sequence from the model we can use the [`sim
 ```Julia
 using ParticleDA
 using HDF5
-
-include("src/nektar_driftwave.jl")
+using NektarDriftwave
 
 num_observation_times = 100
 
@@ -113,8 +110,7 @@ To perform filtering, that is estimation of the distribution of the model state 
 using ParticleDA
 using HDF5
 using MPI
-
-include("src/nektar_driftwave.jl")
+using NektarDriftwave
 
 MPI.Init()
 num_ranks = MPI.Comm_size(MPI.COMM_WORLD)
@@ -153,8 +149,7 @@ The `NetkarDriftwave` module includes a helper function `generate_paraview_vtu_s
 
 ```Julia
 using HDF5
-
-include("src/nektar_driftwave.jl")
+using NektarDriftwave
 
 model_parameters_dict = Dict(
     "nektar_bin_directory" => "/path/to/nektar/build/dist/bin",
