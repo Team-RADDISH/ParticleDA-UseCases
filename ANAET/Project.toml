@@ -1,0 +1,21 @@
+name = "ANAET"
+uuid = "3384170c-ccdb-4827-a3ff-86f50eef2b4d"
+authors = ["Matt Graham"]
+version = "0.1.0"
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
+ParticleDA = "61cd1fb4-f4c4-4bc8-80c6-ea5639a6ca2e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
+
+[compat]
+Distributions = "0.25"
+HDF5 = "0.16, 0.17"
+OrdinaryDiffEq = "6.66"
+PDMats = "0.11"
+ParticleDA = "1.1"
+SciMLBase = "2.15"
