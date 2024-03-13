@@ -666,7 +666,7 @@ function ParticleDA.write_state(
     state::AbstractVector,
     time_index::Int,
     group_name::String,
-    model
+    model::NektarDriftwaveModel
 )
     time_stamp = ParticleDA.time_index_to_hdf5_key(time_index)
     group, _ = ParticleDA.create_or_open_group(file, group_name)
