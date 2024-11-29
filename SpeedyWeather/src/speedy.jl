@@ -1,37 +1,39 @@
+module SpeedyWeatherSSM
+
 using ParticleDA
+using Random
 using SpeedyWeather
 
-
-module SpeedyWeatherModel
-
 LAYERED_VARIABLES = (:vor, :div, :temp, :humid)
-SURFACE_VARIABLES = (:pres)
+SURFACE_VARIABLES = (:pres,)
 
-Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:ModelSetup}
+Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractModel}
     spectral_truncation::Int = 31
-    n_level::Int = 8
-    n_days::Float64 = 0.25
+    n_layers::Int = 8
+    n_days::T = 0.25
     model_type::Type{M} = PrimitiveWetModel
 end
 
 struct SpeedyModel{
     T<:AbstractFloat,
-    G<:AbstractSpectralGrid,
-    M<:ModelSetup,
+    G<:SpeedyWeather.AbstractSpectralGrid,
+    M<:SpeedyWeather.AbstractModel,
 }
     parameters::SpeedyParameters{T, M}
     spectral_grid::G
-    model_setup::M
-    prognostic_variables::PrognosticVariables
-    diagnostic_variables::DiagnosticVariables
+    model::M
+    prognostic_variables::PrognosticVariables{T}
+    diagnostic_variables::DiagnosticVariables{T}
     n_layered_variables::Int
     n_surface_variables::Int
 end
 
 
-function init(parameters::SpeedyParameters{T, M}) where {T<:AbstractFloat, M<:ModelSetup}
-    spectral_grid = SpectralGrid(
-        NF=T, trunc=parameters.spectral_truncation, nlev=parameters.n_level
+function init(parameters::SpeedyParameters{T, M}) where {
+    T<:AbstractFloat, M<:SpeedyWeather.AbstractModel
+}
+    spectral_grid = SpectralGrid(;
+        NF=T, trunc=parameters.spectral_truncation, nlayers=parameters.n_layers
     )
     model = M(; spectral_grid)
     simulation = initialize!(model)
@@ -55,7 +57,7 @@ end
 
 function ParticleDA.get_state_dimension(model::SpeedyModel)
     (model.parameters.spectral_truncation + 1)^2 * (
-        model.parameters.n_level * model.n_layered_variables + model.n_surface_variables
+        model.parameters.n_layers * model.n_layered_variables + model.n_surface_variables
     )
 end
 
@@ -65,7 +67,7 @@ end
 
 function update_spectral_coefficients_from_vector!(
     spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
-    vector::AbstractVector{T}
+    vector::Vector{T}
 ) where {T <: AbstractFloat}
     m, n = size(spectral_coefficients)
     spectral_coefficients[1:m - 1, 1] = vector[1:m - 1]
@@ -80,7 +82,7 @@ end
 
 function update_prognostic_variables_from_state_vector!(
     prognostic_variables::PrognosticVariables{T},
-    state::AbstractVector{T},
+    state::Vector{T},
 ) where {T <: AbstractFloat}
     start_index = 1
     dim_spectral = (prognostic_variables.trunc + 1)^2
@@ -108,10 +110,10 @@ function update_prognostic_variables_from_state_vector!(
 end
 
 function update_vector_from_spectral_coefficients!(
-    vector::AbstractVector{T},
+    vector::Vector{T},
     spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
 ) where {T <: AbstractFloat}
-    m, n = size(spectral_coefficients)
+    m, n = size(spectral_coefficients, as=Matrix)
     vector[1:m - 1] = spectral_coefficients[1:m - 1, 1]
     j = m - 1
     for i in 2:n 
@@ -121,11 +123,11 @@ function update_vector_from_spectral_coefficients!(
 end
 
 function update_state_vector_from_prognostic_variables!(
-    state::AbstractVector{T},
+    state::Vector{T},
     prognostic_variables::PrognosticVariables{T}
 ) where {T <: AbstractFloat}
     start_index = 1
-    dim_spectral = (prognostic_variables.lmax + 1) * (prognostic_variables.mmax + 1)
+    dim_spectral = (prognostic_variables.trunc + 1)^2
     for name in (:vor, :div, :temp, :humid)
         if SpeedyWeather.has(prognostic_variables, name)
             layer_spectral_coefficients = SpeedyWeather.get_var(
@@ -154,42 +156,48 @@ ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 
 function ParticleDA.sample_initial_state!(
-    state::V{T}, model::SpeedyModel{T}, rng::G
-) where {T<:AbstractFloat, V<:AbstractVector, G<:AbstractRNG}
+    state::Vector{T}, model::SpeedyModel{T}, rng::R
+) where {T<:AbstractFloat, R<:AbstractRNG}
     initial_conditions = model.model.initial_conditions
     SpeedyWeather.initialize!(
-        model.prognostic_variables, initial_conditions, model.model_setup
+        model.prognostic_variables, initial_conditions, model.model
     )
     update_state_vector_from_prognostic_variables!(state, model.prognostic_variables)
 end
 
 function ParticleDA.update_state_deterministic!(
-    state::V{T}, model::SpeedyModel{T}, time_index::Int
-) where {T<:AbstractFloat, V<:AbstractVector}
+    state::Vector{T}, model::SpeedyModel{T}, time_index::Int
+) where {T<:AbstractFloat}
     update_prognostic_variables_from_state_vector!(model.prognostic_variables, state)
     (; clock) = model.prognostic_variables
-    (; time_stepping) = model.model_setup
+    (; time_stepping) = model.model
     SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameter.n_days))
     SpeedyWeather.initialize!(clock, time_stepping)
-    SpeedyWeather.time_stepping!(
-        model.prognostic_variables, model.diagnostic_variables, model.model_setup
-    )
     clock.time += clock.n_timesteps * clock.Δt * (time_index - 1)
     clock.timestep_counter += clock.n_timesteps * (time_index - 1)
+    SpeedyWeather.time_stepping!(
+        model.prognostic_variables, model.diagnostic_variables, model.model
+    )
     update_state_vector_from_prognostic_variables!(state, model.prognostic_variables)
 end
 
 function ParticleDA.update_state_stochastic!(    
-    state::V{T}, model::SpeedyModel{T}, rng::G
-) where {T<:AbstractFloat, V<:AbstractVector, G<:AbstractRNG}
+    state::Vector{T}, model::SpeedyModel{T}, rng::G
+) where {T<:AbstractFloat, G<:AbstractRNG}
 
 end
 
 function ParticleDA.sample_observation_given_state!(
-    observation::V{T}, state::V{T}, model::SpeedyModel{T}, rng::G
-) where {T<:AbstractFloat, V<:AbstractVector, G<:AbstractRNG}
-    # TODO: figure out how to update diagnostic variables given prognostic variables
+    observation::Vector{T}, state::Vector{T}, model::SpeedyModel{T}, rng::G
+) where {T<:AbstractFloat, G<:AbstractRNG}
     update_prognostic_variables_from_state_vector!(model.prognostic_variables, state)
+    SpeedyWeather.transform!(
+        model.diagnostic_variables,
+        model.prognostic_variables,
+        1,
+        model.model,
+        true
+    )
 end
 
 function ParticleDA.get_log_density_observation_given_state(observation, state, model)
@@ -197,6 +205,7 @@ function ParticleDA.get_log_density_observation_given_state(observation, state, 
 end
 
 function ParticleDA.write_model_metadata(file, model)
-
+    
 end
 
+end
