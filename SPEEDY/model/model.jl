@@ -574,7 +574,7 @@ function init(model_params_dict::Dict, n_tasks=1)
 end
 
 function ParticleDA.get_observation_mean_given_state!(
-    observation_mean::AbstractVector, state::AbstractVector, model_data::ModelData
+    observation_mean::AbstractVector, state::AbstractVector, model_data::ModelData, n_tasks=1
 )
     state_fields = flat_state_to_fields(state, model_data.model_params)
     n = 1
