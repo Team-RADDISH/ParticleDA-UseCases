@@ -67,86 +67,120 @@ end
 
 function update_spectral_coefficients_from_vector!(
     spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
-    vector::Vector{T}
+    vector::AbstractVector{T}
 ) where {T <: AbstractFloat}
-    m, n = size(spectral_coefficients)
-    spectral_coefficients[1:m - 1, 1] = vector[1:m - 1]
-    j = m - 1
-    for i in 2:n 
-        spectral_coefficients[i:m - 1, i] = reinterpret(
-            Complex{T}, vector[j+1:j+(m - i) * 2]
+    n_row, n_col = size(spectral_coefficients, as=Matrix)
+    # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
+    # last row (degree = l = n_row - 1) as used only for computing meridional derivative
+    # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
+    # skipping zero upper-triangular entries
+    spectral_coefficients[1:n_row - 1] .= vector[1:n_row - 1]
+    # vector index is i, spectral coefficient (flat) index is j
+    i = n_row - 1
+    j = n_row
+    for col_index in 2:n_col
+        # Slice corresponding to column has non-zero entries from col_index row and we
+        # ignore last row as used only for computing meridional derivative for vector
+        # valued fields
+        slice_size = n_row - col_index
+        # Reinterpret real valued state coefficients to complex spectral coefficients
+        spectral_coefficients[j + 1:j + slice_size] .= reinterpret(
+            Complex{T}, vector[i + 1:i + 2 * slice_size]
         )
-        j = j + (m - i) * 2
+        # Zero entry corresponding to last row (degree = l = n_row - 1) as not used
+        # for scalar fields
+        spectral_coefficients[j + slice_size + 1] = 0
+        # Update vector and spectral coefficient indices, adding 1 offset
+        # to latter to skip entries corresponding to last row
+        i = i + 2 * slice_size
+        j = j + 1 + slice_size
     end
 end
 
 function update_prognostic_variables_from_state_vector!(
-    prognostic_variables::PrognosticVariables{T},
-    state::Vector{T},
+    model::SpeedyModel{T}, state::Vector{T}
 ) where {T <: AbstractFloat}
     start_index = 1
-    dim_spectral = (prognostic_variables.trunc + 1)^2
+    dim_spectral = (model.parameters.spectral_truncation + 1)^2
+    (; prognostic_variables) = model
     for name in LAYERED_VARIABLES
-        if SpeedyWeather.has(prognostic_variables, name)
-            layer_spectral_coefficients = SpeedyWeather.get_var(
-                prognostic_variables, name; lf=1
-            )
-            for spectral_coefficients in layer_spectral_coefficients
+        if SpeedyWeather.has(model.model, name)
+            # We only consider spectral coefficients for first leapfrog step (lf=1) to
+            # define state
+            layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
+            for layer_index in 1:model.parameters.n_layers
                 end_index = start_index + dim_spectral - 1
                 update_spectral_coefficients_from_vector!(
-                    spectral_coefficients,
-                    state[start_index:end_index]
+                    layered_spectral_coefficients[:, layer_index],
+                    view(state, start_index:end_index)
                 )
                 start_index = end_index + 1
             end
         end
     end
-    if SpeedyWeather.has(prognostic_variables, :pres)
+    if SpeedyWeather.has(model.model, :pres)
         update_spectral_coefficients_from_vector!(
-            SpeedyWeather.get_pressure(prognostic_variables; lf=1),
-            state[start_index:end]
+            prognostic_variables.pres[1],
+            view(state, start_index:start_index + dim_spectral - 1)
         )
     end
 end
 
 function update_vector_from_spectral_coefficients!(
-    vector::Vector{T},
+    vector::AbstractVector{T},
     spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
 ) where {T <: AbstractFloat}
-    m, n = size(spectral_coefficients, as=Matrix)
-    vector[1:m - 1] = spectral_coefficients[1:m - 1, 1]
-    j = m - 1
-    for i in 2:n 
-        vector[j+1:j+(m - i) * 2] = reinterpret(T, spectral_coefficients[i:m - 1, i])
-        j = j + (m - i) * 2
+    n_row, n_col = size(spectral_coefficients, as=Matrix)
+    # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
+    # last row (degree = l = n_row - 1) as used only for computing meridional derivative
+    # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
+    # skipping zero upper-triangular entries
+    vector[1:n_row - 1] .= real(spectral_coefficients[1:n_row - 1])
+    # vector index is i, spectral coefficient (flat) index is j
+    i = n_row - 1
+    j = n_row
+    for col_index in 2:n_col
+        # Slice corresponding to column has non-zero entries from col_index row and we
+        # ignore last row as used only for computing meridional derivative for vector
+        # valued fields
+        slice_size = n_row - col_index
+        # Reinterpret complex valued spectral coefficients to extract both real and
+        # imaginary components
+        vector[i + 1:i + 2 * slice_size] .= reinterpret(
+            T, spectral_coefficients[j + 1:j + slice_size]
+        )
+        # Update vector and spectral coefficient indices, adding 1 offset
+        # to latter to skip entries corresponding to last row
+        i = i + 2 * slice_size
+        j = j + 1 + slice_size
     end
 end
 
 function update_state_vector_from_prognostic_variables!(
-    state::Vector{T},
-    prognostic_variables::PrognosticVariables{T}
+    state::Vector{T}, model::SpeedyModel{T},
 ) where {T <: AbstractFloat}
     start_index = 1
-    dim_spectral = (prognostic_variables.trunc + 1)^2
-    for name in (:vor, :div, :temp, :humid)
-        if SpeedyWeather.has(prognostic_variables, name)
-            layer_spectral_coefficients = SpeedyWeather.get_var(
-                prognostic_variables, name; lf=1
-            )
-            for spectral_coefficients in layer_spectral_coefficients
+    dim_spectral = (model.parameters.spectral_truncation + 1)^2
+    (; prognostic_variables) = model
+    for name in LAYERED_VARIABLES
+        if SpeedyWeather.has(model.model, name)
+            # We only consider spectral coefficients for first leapfrog step (lf=1) to
+            # define state
+            layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
+            for layer_index in 1:model.parameters.n_layers
                 end_index = start_index + dim_spectral - 1
                 update_vector_from_spectral_coefficients!(
-                    state[start_index:end_index],
-                    spectral_coefficients
+                    view(state, start_index:end_index),
+                    layered_spectral_coefficients[:, layer_index]
                 )
                 start_index = end_index + 1
             end
         end
     end
-    if SpeedyWeather.has(prognostic_variables, :pres)
+    if SpeedyWeather.has(model.model, :pres)
         update_vector_from_spectral_coefficients!(
-            state[start_index:end],
-            SpeedyWeather.get_pressure(prognostic_variables; lf=1)
+            view(state, start_index:start_index + dim_spectral - 1),
+            prognostic_variables.pres[1]
         )
     end
 end
@@ -162,13 +196,13 @@ function ParticleDA.sample_initial_state!(
     SpeedyWeather.initialize!(
         model.prognostic_variables, initial_conditions, model.model
     )
-    update_state_vector_from_prognostic_variables!(state, model.prognostic_variables)
+    update_state_vector_from_prognostic_variables!(state, model)
 end
 
 function ParticleDA.update_state_deterministic!(
     state::Vector{T}, model::SpeedyModel{T}, time_index::Int
 ) where {T<:AbstractFloat}
-    update_prognostic_variables_from_state_vector!(model.prognostic_variables, state)
+    update_prognostic_variables_from_state_vector!(model, state)
     (; clock) = model.prognostic_variables
     (; time_stepping) = model.model
     SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameter.n_days))
@@ -178,7 +212,7 @@ function ParticleDA.update_state_deterministic!(
     SpeedyWeather.time_stepping!(
         model.prognostic_variables, model.diagnostic_variables, model.model
     )
-    update_state_vector_from_prognostic_variables!(state, model.prognostic_variables)
+    update_state_vector_from_prognostic_variables!(state, model)
 end
 
 function ParticleDA.update_state_stochastic!(    
@@ -190,7 +224,7 @@ end
 function ParticleDA.sample_observation_given_state!(
     observation::Vector{T}, state::Vector{T}, model::SpeedyModel{T}, rng::G
 ) where {T<:AbstractFloat, G<:AbstractRNG}
-    update_prognostic_variables_from_state_vector!(model.prognostic_variables, state)
+    update_prognostic_variables_from_state_vector!(model, state)
     SpeedyWeather.transform!(
         model.diagnostic_variables,
         model.prognostic_variables,
@@ -205,7 +239,7 @@ function ParticleDA.get_log_density_observation_given_state(observation, state, 
 end
 
 function ParticleDA.write_model_metadata(file, model)
-    
+
 end
 
 end
