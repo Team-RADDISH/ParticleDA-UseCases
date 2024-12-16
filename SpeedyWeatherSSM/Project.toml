@@ -1,6 +1,12 @@
+name = "SpeedyWeatherSSM"
+uuid = "0d1ea686-ee24-4a74-b4ed-044400b22b75"
+authors = ["Matt Graham"]
+version = "0.1.0"
+
 [deps]
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 ParticleDA = "61cd1fb4-f4c4-4bc8-80c6-ea5639a6ca2e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SpeedyWeather = "9e226e20-d153-4fed-8a5b-493def4f21a9"
 
 [compat]
