@@ -96,10 +96,11 @@ function ParticleDA.get_observation_dimension(model::SpeedyModel)
 end
 
 function update_spectral_coefficients_from_vector!(
-    spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
-    vector::AbstractVector{T}
+    spectral_coefficients::AbstractVector{Complex{T}}, 
+    vector::AbstractVector{T},
+    spectral_truncation::Int
 ) where {T <: AbstractFloat}
-    n_row, n_col = size(spectral_coefficients, as=Matrix)
+    n_row, n_col = spectral_truncation + 2, spectral_truncation + 1
     # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
     # last row (degree = l = n_row - 1) as used only for computing meridional derivative
     # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
@@ -141,8 +142,9 @@ function update_prognostic_variables_from_state_vector!(
             for layer_index in 1:model.parameters.n_layers
                 end_index = start_index + dim_spectral - 1
                 update_spectral_coefficients_from_vector!(
-                    layered_spectral_coefficients[:, layer_index],
-                    view(state, start_index:end_index)
+                    view(layered_spectral_coefficients, :, layer_index),
+                    view(state, start_index:end_index),
+                    model.parameters.spectral_truncation
                 )
                 start_index = end_index + 1
             end
@@ -151,16 +153,18 @@ function update_prognostic_variables_from_state_vector!(
     if SpeedyWeather.has(model.model, :pres)
         update_spectral_coefficients_from_vector!(
             prognostic_variables.pres[1],
-            view(state, start_index:start_index + dim_spectral - 1)
+            view(state, start_index:start_index + dim_spectral - 1),
+            model.parameters.spectral_truncation
         )
     end
 end
 
 function update_vector_from_spectral_coefficients!(
     vector::AbstractVector{T},
-    spectral_coefficients::SpeedyWeather.LowerTriangularMatrix{Complex{T}}, 
+    spectral_coefficients::AbstractVector{Complex{T}},
+    spectral_truncation::Int
 ) where {T <: AbstractFloat}
-    n_row, n_col = size(spectral_coefficients, as=Matrix)
+    n_row, n_col = spectral_truncation + 2, spectral_truncation + 1
     # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
     # last row (degree = l = n_row - 1) as used only for computing meridional derivative
     # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
@@ -201,7 +205,8 @@ function update_state_vector_from_prognostic_variables!(
                 end_index = start_index + dim_spectral - 1
                 update_vector_from_spectral_coefficients!(
                     view(state, start_index:end_index),
-                    layered_spectral_coefficients[:, layer_index]
+                    view(layered_spectral_coefficients, :, layer_index),
+                    model.parameters.spectral_truncation
                 )
                 start_index = end_index + 1
             end
@@ -210,7 +215,8 @@ function update_state_vector_from_prognostic_variables!(
     if SpeedyWeather.has(model.model, :pres)
         update_vector_from_spectral_coefficients!(
             view(state, start_index:start_index + dim_spectral - 1),
-            prognostic_variables.pres[1]
+            prognostic_variables.pres[1],
+            model.parameters.spectral_truncation
         )
     end
 end
