@@ -327,6 +327,7 @@ function ParticleDA.write_model_metadata(file::HDF5.File, model::SpeedyModel)
             value = getfield(model.parameters, field)
             isa(value, Type) && (value = string(nameof(value)))
             isa(value, Tuple{Symbol, Symbol}) && (value = join(map(String, value), "."))
+            isa(value, DateTime) && (value = string(value))
             HDF5.attributes(group)[string(field)] = value
         end
     else
