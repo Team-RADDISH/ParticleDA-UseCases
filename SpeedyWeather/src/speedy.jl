@@ -1,5 +1,6 @@
 module SpeedyWeatherSSM
 
+using HDF5  
 using ParticleDA
 using Random
 using SpeedyWeather
@@ -308,8 +309,19 @@ function ParticleDA.get_log_density_observation_given_state(
 
 end
 
-function ParticleDA.write_model_metadata(file, model)
-
+function ParticleDA.write_model_metadata(file::HDF5.File, model::SpeedyModel)
+    group_name = "parameters"
+    if !haskey(file, group_name)
+        group = create_group(file, group_name)
+        for field in fieldnames(typeof(model.parameters))
+            value = getfield(model.parameters, field)
+            isa(value, Type) && (value = string(nameof(value)))
+            isa(value, Tuple{Symbol, Symbol}) && (value = join(map(String, value), "."))
+            HDF5.attributes(group)[string(field)] = value
+        end
+    else
+        @warn "Write failed, group $group_name already exists in  $(file.filename)!"
+    end
 end
 
 end
