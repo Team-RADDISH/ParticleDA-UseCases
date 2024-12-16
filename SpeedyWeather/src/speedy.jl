@@ -3,21 +3,36 @@ module SpeedyWeatherSSM
 using ParticleDA
 using Random
 using SpeedyWeather
+using SpeedyWeather.RingGrids
 
 LAYERED_VARIABLES = (:vor, :div, :temp, :humid)
 SURFACE_VARIABLES = (:pres,)
+
+function equispaced_lat_lon_grid(T, n_lat, n_lon)
+    lat_interval = 180 / n_lat
+    lon_interval = 360 / n_lon
+    lat_range = (-90 + lat_interval/2):lat_interval:90
+    lon_range = (lon_interval/2):lon_interval:360
+    lat_lon_pairs = [(T(lat), T(lon)) for lat in lat_range for lon in lon_range]
+    collect(reshape(reinterpret(T, lat_lon_pairs), (2, :)))
+end
 
 Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractModel}
     spectral_truncation::Int = 31
     n_layers::Int = 8
     n_days::T = 0.25
+    float_type::Type{T} = Float64
     model_type::Type{M} = PrimitiveWetModel
+    observed_variable::Tuple{Symbol, Symbol} = (:physics, :precip_large_scale)
+    observed_coordinates::Matrix{T} = equispaced_lat_lon_grid(float_type, 6, 12)
+    observation_noise_std::T = 0.1
 end
 
 struct SpeedyModel{
     T<:AbstractFloat,
     G<:SpeedyWeather.AbstractSpectralGrid,
     M<:SpeedyWeather.AbstractModel,
+    I<:SpeedyWeather.RingGrids.AbstractInterpolator
 }
     parameters::SpeedyParameters{T, M}
     spectral_grid::G
@@ -26,8 +41,9 @@ struct SpeedyModel{
     diagnostic_variables::DiagnosticVariables{T}
     n_layered_variables::Int
     n_surface_variables::Int
+    n_observed_points::Int
+    observation_interpolator::I
 end
-
 
 function init(parameters::SpeedyParameters{T, M}) where {
     T<:AbstractFloat, M<:SpeedyWeather.AbstractModel
@@ -44,6 +60,15 @@ function init(parameters::SpeedyParameters{T, M}) where {
     n_surface_variables = count(
         SpeedyWeather.has(model, var) for var in SURFACE_VARIABLES
     )
+    n_observed_points = size(parameters.observed_coordinates, 2)
+    observation_interpolator = SpeedyWeather.AnvilInterpolator(
+        T, spectral_grid.Grid, spectral_grid.nlat_half, n_observed_points
+    )
+    SpeedyWeather.RingGrids.update_locator!(
+        observation_interpolator,
+        parameters.observed_coordinates[1, :],
+        parameters.observed_coordinates[2, :]
+    )
     return SpeedyModel(
         parameters,
         spectral_grid,
@@ -52,6 +77,8 @@ function init(parameters::SpeedyParameters{T, M}) where {
         diagnostic_variables,
         n_layered_variables,
         n_surface_variables,
+        n_observed_points,
+        observation_interpolator
     )
 end
 
@@ -62,7 +89,7 @@ function ParticleDA.get_state_dimension(model::SpeedyModel)
 end
 
 function ParticleDA.get_observation_dimension(model::SpeedyModel)
-    
+    model.n_observed_points
 end
 
 function update_spectral_coefficients_from_vector!(
@@ -98,7 +125,7 @@ function update_spectral_coefficients_from_vector!(
 end
 
 function update_prognostic_variables_from_state_vector!(
-    model::SpeedyModel{T}, state::Vector{T}
+    model::SpeedyModel{T}, state::AbstractVector{T}
 ) where {T <: AbstractFloat}
     start_index = 1
     dim_spectral = (model.parameters.spectral_truncation + 1)^2
@@ -157,7 +184,7 @@ function update_vector_from_spectral_coefficients!(
 end
 
 function update_state_vector_from_prognostic_variables!(
-    state::Vector{T}, model::SpeedyModel{T},
+    state::AbstractVector{T}, model::SpeedyModel{T},
 ) where {T <: AbstractFloat}
     start_index = 1
     dim_spectral = (model.parameters.spectral_truncation + 1)^2
@@ -190,7 +217,7 @@ ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 
 function ParticleDA.sample_initial_state!(
-    state::Vector{T}, model::SpeedyModel{T}, rng::R
+    state::AbstractVector{T}, model::SpeedyModel{T}, rng::R, task_index::Int=1
 ) where {T<:AbstractFloat, R<:AbstractRNG}
     initial_conditions = model.model.initial_conditions
     SpeedyWeather.initialize!(
@@ -200,7 +227,7 @@ function ParticleDA.sample_initial_state!(
 end
 
 function ParticleDA.update_state_deterministic!(
-    state::Vector{T}, model::SpeedyModel{T}, time_index::Int
+    state::AbstractVector{T}, model::SpeedyModel{T}, time_index::Int, task_index::Int=1
 ) where {T<:AbstractFloat}
     update_prognostic_variables_from_state_vector!(model, state)
     (; clock) = model.prognostic_variables
@@ -216,25 +243,68 @@ function ParticleDA.update_state_deterministic!(
 end
 
 function ParticleDA.update_state_stochastic!(    
-    state::Vector{T}, model::SpeedyModel{T}, rng::G
+    state::AbstractVector{T}, model::SpeedyModel{T}, rng::G, task_index::Int=1
 ) where {T<:AbstractFloat, G<:AbstractRNG}
 
 end
 
-function ParticleDA.sample_observation_given_state!(
-    observation::Vector{T}, state::Vector{T}, model::SpeedyModel{T}, rng::G
-) where {T<:AbstractFloat, G<:AbstractRNG}
+function get_observed_variable_field(
+    diagnostic_variables::DiagnosticVariables, model::SpeedyModel
+)
+    observed_outer, observed_inner = model.parameters.observed_variable
+    getfield(
+        getfield(diagnostic_variables, observed_outer), observed_inner
+    )
+end
+
+function ParticleDA.get_observation_mean_given_state!(
+    observation_mean::AbstractVector{T},
+    state::AbstractVector{T},
+    model::SpeedyModel{T},
+    task_index::Int=1
+) where {T<:AbstractFloat}
     update_prognostic_variables_from_state_vector!(model, state)
     SpeedyWeather.transform!(
         model.diagnostic_variables,
         model.prognostic_variables,
         1,
         model.model,
-        true
+        initialize=true
+    )
+    observed_field_grid = get_observed_variable_field(model.diagnostic_variables, model)
+    SpeedyWeather.interpolate!(
+        observation_mean, observed_field_grid, model.observation_interpolator
     )
 end
 
-function ParticleDA.get_log_density_observation_given_state(observation, state, model)
+function ParticleDA.sample_observation_given_state!(
+    observation::AbstractVector{T},
+    state::AbstractVector{T},
+    model::SpeedyModel{T},
+    rng::G,
+    task_index::Int=1
+) where {T<:AbstractFloat, G<:AbstractRNG}
+    ParticleDA.get_observation_mean_given_state!(observation, state, model, task_index)
+    observation .+= (
+        model.parameters.observation_noise_std 
+        * randn(rng, T, ParticleDA.get_observation_dimension(model))
+    )
+end
+
+function ParticleDA.get_log_density_observation_given_state(
+    observation::AbstractVector{T},
+    state::AbstractVector{T},
+    model::SpeedyModel{T},
+    task_index::Int=1
+) where {T<:AbstractFloat}
+    observation_mean = Vector{T}(undef, ParticleDA.get_observation_dimension(model))
+    ParticleDA.get_observation_mean_given_state!(
+        observation_mean, state, model, task_index
+    )
+    return (
+        -sum((observation - observation_mean).^2) 
+        / (2 * model.parameters.observation_noise_std^2)
+    )
 
 end
 
