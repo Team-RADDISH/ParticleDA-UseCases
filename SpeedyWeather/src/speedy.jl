@@ -232,7 +232,7 @@ function ParticleDA.update_state_deterministic!(
     update_prognostic_variables_from_state_vector!(model, state)
     (; clock) = model.prognostic_variables
     (; time_stepping) = model.model
-    SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameter.n_days))
+    SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameters.n_days))
     SpeedyWeather.initialize!(clock, time_stepping)
     clock.time += clock.n_timesteps * clock.Δt * (time_index - 1)
     clock.timestep_counter += clock.n_timesteps * (time_index - 1)
