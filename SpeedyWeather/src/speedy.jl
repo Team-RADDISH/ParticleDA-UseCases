@@ -22,6 +22,7 @@ Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractM
     spectral_truncation::Int = 31
     n_layers::Int = 8
     n_days::T = 0.25
+    start_date::DateTime = DateTime(2000, 1, 1)
     float_type::Type{T} = Float64
     model_type::Type{M} = PrimitiveWetModel
     observed_variable::Tuple{Symbol, Symbol} = (:physics, :precip_large_scale)
@@ -55,7 +56,7 @@ function init(parameters::SpeedyParameters{T, M}) where {
     feedback = SpeedyWeather.Feedback(; verbose=false)
     model = M(; spectral_grid, feedback)
     model.output.active = false
-    simulation = initialize!(model)
+    simulation = initialize!(model; time=parameters.start_date)
     (; prognostic_variables, diagnostic_variables) = simulation
     n_layered_variables = count(
         SpeedyWeather.has(model, var) for var in LAYERED_VARIABLES
@@ -243,8 +244,9 @@ function ParticleDA.update_state_deterministic!(
     (; time_stepping) = model.model
     SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameters.n_days))
     SpeedyWeather.initialize!(clock, time_stepping)
-    clock.time += clock.n_timesteps * clock.Δt * (time_index - 1)
-    clock.timestep_counter += clock.n_timesteps * (time_index - 1)
+    clock.start = model.parameters.start_date
+    clock.time = clock.start + clock.n_timesteps * clock.Δt * (time_index - 1)
+    clock.timestep_counter = clock.n_timesteps * (time_index - 1)
     SpeedyWeather.time_stepping!(
         model.prognostic_variables, model.diagnostic_variables, model.model
     )
