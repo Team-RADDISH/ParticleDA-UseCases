@@ -52,7 +52,9 @@ function init(parameters::SpeedyParameters{T, M}) where {
     spectral_grid = SpectralGrid(;
         NF=T, trunc=parameters.spectral_truncation, nlayers=parameters.n_layers
     )
-    model = M(; spectral_grid)
+    feedback = SpeedyWeather.Feedback(; verbose=false)
+    model = M(; spectral_grid, feedback)
+    model.output.active = false
     simulation = initialize!(model)
     (; prognostic_variables, diagnostic_variables) = simulation
     n_layered_variables = count(
