@@ -131,34 +131,46 @@ function update_spectral_coefficients_from_vector!(
 end
 
 function update_prognostic_variables_from_state_vector!(
-    model::SpeedyModel{T}, state::AbstractVector{T}
+    prognostic_variables::SpeedyWeather.PrognosticVariables{T},
+    state::AbstractVector{T},
+    variable_names::Tuple
 ) where {T <: AbstractFloat}
     start_index = 1
-    dim_spectral = (model.parameters.spectral_truncation + 1)^2
-    (; prognostic_variables) = model
+    spectral_truncation = prognostic_variables.trunc
+    dim_spectral = (spectral_truncation + 1)^2
     for name in LAYERED_VARIABLES
-        if SpeedyWeather.has(model.model, name)
+        if name in variable_names
             # We only consider spectral coefficients for first leapfrog step (lf=1) to
             # define state
             layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
-            for layer_index in 1:model.parameters.n_layers
+            for layer_index in 1:prognostic_variables.nlayers
                 end_index = start_index + dim_spectral - 1
                 update_spectral_coefficients_from_vector!(
                     view(layered_spectral_coefficients, :, layer_index),
                     view(state, start_index:end_index),
-                    model.parameters.spectral_truncation
+                    spectral_truncation
                 )
                 start_index = end_index + 1
             end
         end
     end
-    if SpeedyWeather.has(model.model, :pres)
+    if :pres in variable_names
         update_spectral_coefficients_from_vector!(
             prognostic_variables.pres[1],
             view(state, start_index:start_index + dim_spectral - 1),
-            model.parameters.spectral_truncation
+            spectral_truncation
         )
     end
+end
+
+function update_prognostic_variables_from_state_vector!(
+    model::SpeedyModel{T}, state::AbstractVector{T}
+) where {T <: AbstractFloat}
+    update_prognostic_variables_from_state_vector!(
+        model.prognostic_variables,
+        state,
+        SpeedyWeather.prognostic_variables(model.model)
+    )
 end
 
 function update_vector_from_spectral_coefficients!(
@@ -193,34 +205,46 @@ function update_vector_from_spectral_coefficients!(
 end
 
 function update_state_vector_from_prognostic_variables!(
-    state::AbstractVector{T}, model::SpeedyModel{T},
+    state::AbstractVector{T},
+    prognostic_variables::SpeedyWeather.PrognosticVariables{T},
+    variable_names::Tuple
 ) where {T <: AbstractFloat}
     start_index = 1
-    dim_spectral = (model.parameters.spectral_truncation + 1)^2
-    (; prognostic_variables) = model
+    spectral_truncation = prognostic_variables.trunc
+    dim_spectral = (spectral_truncation + 1)^2
     for name in LAYERED_VARIABLES
-        if SpeedyWeather.has(model.model, name)
+        if name in variable_names
             # We only consider spectral coefficients for first leapfrog step (lf=1) to
             # define state
             layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
-            for layer_index in 1:model.parameters.n_layers
+            for layer_index in 1:prognostic_variables.nlayers
                 end_index = start_index + dim_spectral - 1
                 update_vector_from_spectral_coefficients!(
                     view(state, start_index:end_index),
                     view(layered_spectral_coefficients, :, layer_index),
-                    model.parameters.spectral_truncation
+                    spectral_truncation
                 )
                 start_index = end_index + 1
             end
         end
     end
-    if SpeedyWeather.has(model.model, :pres)
+    if :pres in variable_names
         update_vector_from_spectral_coefficients!(
             view(state, start_index:start_index + dim_spectral - 1),
             prognostic_variables.pres[1],
-            model.parameters.spectral_truncation
+            spectral_truncation
         )
     end
+end
+
+function update_state_vector_from_prognostic_variables!(
+    state::AbstractVector{T}, model::SpeedyModel{T}
+) where {T <: AbstractFloat}
+    update_state_vector_from_prognostic_variables!(
+        state,
+        model.prognostic_variables,
+        SpeedyWeather.prognostic_variables(model.model)
+    )
 end
 
 ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
