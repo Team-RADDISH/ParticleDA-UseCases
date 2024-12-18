@@ -13,7 +13,7 @@ function equispaced_lat_lon_grid(T, n_lat, n_lon)
     lat_interval = 180 / n_lat
     lon_interval = 360 / n_lon
     lat_range = (-90 + lat_interval/2):lat_interval:90
-    lon_range = (lon_interval/2):lon_interval:360
+    lon_range = (-180 + lon_interval/2):lon_interval:180
     lat_lon_pairs = [(T(lat), T(lon)) for lat in lat_range for lon in lon_range]
     collect(reshape(reinterpret(T, lat_lon_pairs), (2, :)))
 end
