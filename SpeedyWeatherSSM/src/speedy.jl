@@ -107,6 +107,8 @@ function update_spectral_coefficients_from_vector!(
     # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
     # skipping zero upper-triangular entries
     spectral_coefficients[1:n_row - 1] .= vector[1:n_row - 1]
+    # Zero entry corresponding to last row as not used for scalar fields
+    spectral_coefficients[n_row] = 0
     # vector index is i, spectral coefficient (flat) index is j
     i = n_row - 1
     j = n_row
@@ -119,8 +121,7 @@ function update_spectral_coefficients_from_vector!(
         spectral_coefficients[j + 1:j + slice_size] .= reinterpret(
             Complex{T}, vector[i + 1:i + 2 * slice_size]
         )
-        # Zero entry corresponding to last row (degree = l = n_row - 1) as not used
-        # for scalar fields
+        # Zero entry corresponding to last row as not use for scalar fields
         spectral_coefficients[j + slice_size + 1] = 0
         # Update vector and spectral coefficient indices, adding 1 offset
         # to latter to skip entries corresponding to last row
