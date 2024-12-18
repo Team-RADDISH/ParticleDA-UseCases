@@ -89,6 +89,53 @@ end
     @test !any(isnan.(vector))
     check_consistency_vector_and_spectral_coefficients(vector, spectral_coefficients)          
 end
+
+@testset (
+    "Updating prognostic variables to/from state vector with \
+    T=$T, spectral_truncation=$spectral_truncation, n_layers=$n_layers"
+ ) for T in (Float32, Float64), spectral_truncation in (7, 15), n_layers in (1, 8)
+    rng = Random.Xoshiro(1234)
+    spectral_grid = SpectralGrid(;
+        NF=T, trunc=spectral_truncation, nlayers=n_layers
+    )
+    layered_variables = (:vor, :div, :temp, :humid)
+    surface_variables = (:pres,)
+    all_variables = (layered_variables..., surface_variables...)
+    state_dimension = (spectral_truncation + 1)^2 * (
+        n_layers * length(layered_variables) + length(surface_variables)
+    )
+    state = rand(rng, T, state_dimension)
+    prognostic_variables_1 = SpeedyWeather.PrognosticVariables(spectral_grid)
+    prognostic_variables_1_init = SpeedyWeather.PrognosticVariables(spectral_grid)
+    SpeedyWeather.copy!(prognostic_variables_1_init, prognostic_variables_1)
+    prognostic_variables_2 = SpeedyWeather.PrognosticVariables(spectral_grid)
+    SpeedyWeatherSSM.update_prognostic_variables_from_state_vector!(
+        prognostic_variables_1, state, all_variables
+    )
+    SpeedyWeatherSSM.update_prognostic_variables_from_state_vector!(
+        prognostic_variables_2, state, all_variables
+    )
+    # Check all variables changed from initial values
+    for variable_name in all_variables
+        @test all(
+            getproperty(prognostic_variables_1, variable_name)[1]
+            != getproperty(prognostic_variables_1_init, variable_name)[1]
+        )
+    end
+    # Check variables updates from same state vector match
+    for variable_name in all_variables
+        @test all(
+            getproperty(prognostic_variables_1, variable_name)[1]
+            == getproperty(prognostic_variables_2, variable_name)[1]
+        )
+    end
+    # Check state vector reconstructed from prognostic variables matches original
+    state_2 = Vector{T}(undef, state_dimension)
+    SpeedyWeatherSSM.update_state_vector_from_prognostic_variables!(
+        state_2, prognostic_variables_1, all_variables
+    )
+    @test all(state == state_2)
+end
     
 @testset "Generic model interface unit tests" begin
     seed = 1234
