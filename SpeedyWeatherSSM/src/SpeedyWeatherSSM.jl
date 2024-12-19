@@ -155,12 +155,17 @@ function update_prognostic_variables_from_state_vector!(
             end
         end
     end
-    if :pres in variable_names
-        update_spectral_coefficients_from_vector!(
-            prognostic_variables.pres[leapfrog_step],
-            view(state, start_index:start_index + dim_spectral - 1),
-            spectral_truncation
-        )
+    for name in SURFACE_VARIABLES
+        if name in variable_names
+            spectral_coefficients = getproperty(
+                prognostic_variables, name
+            )[leapfrog_step]
+            update_spectral_coefficients_from_vector!(
+                spectral_coefficients,
+                view(state, start_index:start_index + dim_spectral - 1),
+                spectral_truncation
+            )
+        end
     end
 end
 
@@ -216,8 +221,6 @@ function update_state_vector_from_prognostic_variables!(
     dim_spectral = (spectral_truncation + 1)^2
     for name in LAYERED_VARIABLES
         if name in variable_names
-            # We only consider spectral coefficients for first leapfrog step (lf=1) to
-            # define state
             layered_spectral_coefficients = getproperty(
                 prognostic_variables, name
             )[leapfrog_step]
@@ -232,12 +235,17 @@ function update_state_vector_from_prognostic_variables!(
             end
         end
     end
-    if :pres in variable_names
-        update_vector_from_spectral_coefficients!(
-            view(state, start_index:start_index + dim_spectral - 1),
-            prognostic_variables.pres[leapfrog_step],
-            spectral_truncation
-        )
+    for name in SURFACE_VARIABLES
+        if name in variable_names
+            spectral_coefficients = getproperty(
+                prognostic_variables, name
+            )[leapfrog_step]
+            update_vector_from_spectral_coefficients!(
+                view(state, start_index:start_index + dim_spectral - 1),
+                spectral_coefficients,
+                spectral_truncation
+            )
+        end
     end
 end
 
