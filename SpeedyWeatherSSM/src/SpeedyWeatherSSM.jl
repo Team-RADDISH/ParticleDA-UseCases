@@ -1,5 +1,6 @@
 module SpeedyWeatherSSM
 
+using FillArrays
 using HDF5  
 using ParticleDA
 using Random
@@ -179,7 +180,15 @@ function update_prognostic_variables_from_state_vector!(
     update_prognostic_variables_from_state_vector!(
         model.prognostic_variables,
         state,
-        SpeedyWeather.prognostic_variables(model.model)
+        SpeedyWeather.prognostic_variables(model.model);
+        leapfrog_step=1
+    )
+    # Zero cofficients for second leapfrog step (corresponding to initial state)
+    update_prognostic_variables_from_state_vector!(
+        model.prognostic_variables,
+        Zeros(ParticleDA.get_state_dimension(model)),
+        SpeedyWeather.prognostic_variables(model.model);
+        leapfrog_step=2
     )
 end
 

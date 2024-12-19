@@ -4,6 +4,7 @@ authors = ["Matt Graham"]
 version = "0.1.0"
 
 [deps]
+FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 ParticleDA = "61cd1fb4-f4c4-4bc8-80c6-ea5639a6ca2e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -14,8 +15,8 @@ ParticleDA = "1.2"
 SpeedyWeather = "0.12"
 
 [extras]
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ReadOnlyArrays = "988b38a3-91fc-5605-94a2-ee2116b3bd83"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test", "ReadOnlyArrays"]
