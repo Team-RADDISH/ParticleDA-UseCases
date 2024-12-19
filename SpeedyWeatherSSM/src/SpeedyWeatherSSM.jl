@@ -73,6 +73,10 @@ function init(parameters::SpeedyParameters{T, M}) where {
         parameters.observed_coordinates[1, :],
         parameters.observed_coordinates[2, :]
     )
+    SpeedyWeather.set_period!(
+        prognostic_variables.clock, SpeedyWeather.Day(parameters.n_days)
+    )
+    SpeedyWeather.initialize!(prognostic_variables.clock, model.time_stepping)
     return SpeedyModel(
         parameters,
         spectral_grid,
@@ -259,6 +263,15 @@ function update_state_vector_from_prognostic_variables!(
     )
 end
 
+function update_clock_from_time_index!(clock::SpeedyWeather.Clock,time_index::Int)
+    clock.time = clock.start + clock.n_timesteps * clock.Δt * (time_index - 1)
+    clock.timestep_counter = clock.n_timesteps * (time_index - 1)
+end
+
+function update_clock_from_time_index!(model::SpeedyModel, time_index::Int)
+    update_clock_from_time_index!(model.prognostic_variables.clock, time_index)
+end
+
 ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 
 ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
@@ -277,13 +290,7 @@ function ParticleDA.update_state_deterministic!(
     state::AbstractVector{T}, model::SpeedyModel{T}, time_index::Int, task_index::Int=1
 ) where {T<:AbstractFloat}
     update_prognostic_variables_from_state_vector!(model, state)
-    (; clock) = model.prognostic_variables
-    (; time_stepping) = model.model
-    SpeedyWeather.set_period!(clock, SpeedyWeather.Day(model.parameters.n_days))
-    SpeedyWeather.initialize!(clock, time_stepping)
-    clock.start = model.parameters.start_date
-    clock.time = clock.start + clock.n_timesteps * clock.Δt * (time_index - 1)
-    clock.timestep_counter = clock.n_timesteps * (time_index - 1)
+    update_clock_from_time_index!(model, time_index)
     SpeedyWeather.time_stepping!(
         model.prognostic_variables, model.diagnostic_variables, model.model
     )
