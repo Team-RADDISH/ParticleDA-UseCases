@@ -133,16 +133,17 @@ end
 function update_prognostic_variables_from_state_vector!(
     prognostic_variables::SpeedyWeather.PrognosticVariables{T},
     state::AbstractVector{T},
-    variable_names::Tuple
+    variable_names::Tuple;
+    leapfrog_step::Int = 1
 ) where {T <: AbstractFloat}
     start_index = 1
     spectral_truncation = prognostic_variables.trunc
     dim_spectral = (spectral_truncation + 1)^2
     for name in LAYERED_VARIABLES
         if name in variable_names
-            # We only consider spectral coefficients for first leapfrog step (lf=1) to
-            # define state
-            layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
+            layered_spectral_coefficients = getproperty(
+                prognostic_variables, name
+            )[leapfrog_step]
             for layer_index in 1:prognostic_variables.nlayers
                 end_index = start_index + dim_spectral - 1
                 update_spectral_coefficients_from_vector!(
@@ -156,7 +157,7 @@ function update_prognostic_variables_from_state_vector!(
     end
     if :pres in variable_names
         update_spectral_coefficients_from_vector!(
-            prognostic_variables.pres[1],
+            prognostic_variables.pres[leapfrog_step],
             view(state, start_index:start_index + dim_spectral - 1),
             spectral_truncation
         )
@@ -207,7 +208,8 @@ end
 function update_state_vector_from_prognostic_variables!(
     state::AbstractVector{T},
     prognostic_variables::SpeedyWeather.PrognosticVariables{T},
-    variable_names::Tuple
+    variable_names::Tuple;
+    leapfrog_step::Int = 1
 ) where {T <: AbstractFloat}
     start_index = 1
     spectral_truncation = prognostic_variables.trunc
@@ -216,7 +218,9 @@ function update_state_vector_from_prognostic_variables!(
         if name in variable_names
             # We only consider spectral coefficients for first leapfrog step (lf=1) to
             # define state
-            layered_spectral_coefficients = getproperty(prognostic_variables, name)[1]
+            layered_spectral_coefficients = getproperty(
+                prognostic_variables, name
+            )[leapfrog_step]
             for layer_index in 1:prognostic_variables.nlayers
                 end_index = start_index + dim_spectral - 1
                 update_vector_from_spectral_coefficients!(
@@ -231,7 +235,7 @@ function update_state_vector_from_prognostic_variables!(
     if :pres in variable_names
         update_vector_from_spectral_coefficients!(
             view(state, start_index:start_index + dim_spectral - 1),
-            prognostic_variables.pres[1],
+            prognostic_variables.pres[leapfrog_step],
             spectral_truncation
         )
     end
