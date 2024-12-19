@@ -272,6 +272,26 @@ function update_clock_from_time_index!(model::SpeedyModel, time_index::Int)
     update_clock_from_time_index!(model.prognostic_variables.clock, time_index)
 end
 
+function get_observed_variable_field(
+    diagnostic_variables::DiagnosticVariables, model::SpeedyModel
+)
+    observed_outer, observed_inner = model.parameters.observed_variable
+    getfield(getfield(diagnostic_variables, observed_outer), observed_inner)
+end
+
+function update_prognostic_and_diagnostic_variables_from_state_vector!(
+    model::SpeedyModel{T}, state::AbstractVector{T}
+) where {T <: AbstractFloat}
+    update_prognostic_variables_from_state_vector!(model, state)
+    SpeedyWeather.transform!(
+        model.diagnostic_variables,
+        model.prognostic_variables,
+        1,
+        model.model,
+        initialize=true
+    )
+end
+
 ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 
 ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
@@ -303,29 +323,13 @@ function ParticleDA.update_state_stochastic!(
 
 end
 
-function get_observed_variable_field(
-    diagnostic_variables::DiagnosticVariables, model::SpeedyModel
-)
-    observed_outer, observed_inner = model.parameters.observed_variable
-    getfield(
-        getfield(diagnostic_variables, observed_outer), observed_inner
-    )
-end
-
 function ParticleDA.get_observation_mean_given_state!(
     observation_mean::AbstractVector{T},
     state::AbstractVector{T},
     model::SpeedyModel{T},
     task_index::Int=1
 ) where {T<:AbstractFloat}
-    update_prognostic_variables_from_state_vector!(model, state)
-    SpeedyWeather.transform!(
-        model.diagnostic_variables,
-        model.prognostic_variables,
-        1,
-        model.model,
-        initialize=true
-    )
+    update_prognostic_and_diagnostic_variables_from_state_vector!(model, state)
     observed_field_grid = get_observed_variable_field(model.diagnostic_variables, model)
     SpeedyWeather.interpolate!(
         observation_mean, observed_field_grid, model.observation_interpolator
