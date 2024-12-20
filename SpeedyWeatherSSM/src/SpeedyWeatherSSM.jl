@@ -135,11 +135,12 @@ function update_spectral_coefficients_from_vector!(
     end
 end
 
-function update_prognostic_variables_from_state_vector!(
+function map_over_spectral_coefficients_and_state_vector_slices(
+    map_function::Function,
     prognostic_variables::SpeedyWeather.PrognosticVariables{T},
     state::AbstractVector{T},
-    variable_names::Tuple;
-    leapfrog_step::Int = 1
+    variable_names::Tuple,
+    leapfrog_step::Int
 ) where {T <: AbstractFloat}
     start_index = 1
     spectral_truncation = prognostic_variables.trunc
@@ -151,10 +152,9 @@ function update_prognostic_variables_from_state_vector!(
             )[leapfrog_step]
             for layer_index in 1:prognostic_variables.nlayers
                 end_index = start_index + dim_spectral - 1
-                update_spectral_coefficients_from_vector!(
+                map_function(
                     view(layered_spectral_coefficients, :, layer_index),
-                    view(state, start_index:end_index),
-                    spectral_truncation
+                    view(state, start_index:end_index)
                 )
                 start_index = end_index + 1
             end
@@ -162,16 +162,28 @@ function update_prognostic_variables_from_state_vector!(
     end
     for name in SURFACE_VARIABLES
         if name in variable_names
-            spectral_coefficients = getproperty(
-                prognostic_variables, name
-            )[leapfrog_step]
-            update_spectral_coefficients_from_vector!(
-                spectral_coefficients,
+            map_function(
+                getproperty(prognostic_variables, name)[leapfrog_step],
                 view(state, start_index:start_index + dim_spectral - 1),
-                spectral_truncation
             )
         end
     end
+end
+
+function update_prognostic_variables_from_state_vector!(
+    prognostic_variables::SpeedyWeather.PrognosticVariables{T},
+    state::AbstractVector{T},
+    variable_names::Tuple;
+    leapfrog_step::Int = 1
+) where {T <: AbstractFloat}
+    spectral_truncation = prognostic_variables.trunc
+    map_over_spectral_coefficients_and_state_vector_slices(
+        (c, v) -> update_spectral_coefficients_from_vector!(c, v, spectral_truncation),
+        prognostic_variables,
+        state,
+        variable_names,
+        leapfrog_step
+    )
 end
 
 function update_prognostic_variables_from_state_vector!(
@@ -229,37 +241,14 @@ function update_state_vector_from_prognostic_variables!(
     variable_names::Tuple;
     leapfrog_step::Int = 1
 ) where {T <: AbstractFloat}
-    start_index = 1
     spectral_truncation = prognostic_variables.trunc
-    dim_spectral = (spectral_truncation + 1)^2
-    for name in LAYERED_VARIABLES
-        if name in variable_names
-            layered_spectral_coefficients = getproperty(
-                prognostic_variables, name
-            )[leapfrog_step]
-            for layer_index in 1:prognostic_variables.nlayers
-                end_index = start_index + dim_spectral - 1
-                update_vector_from_spectral_coefficients!(
-                    view(state, start_index:end_index),
-                    view(layered_spectral_coefficients, :, layer_index),
-                    spectral_truncation
-                )
-                start_index = end_index + 1
-            end
-        end
-    end
-    for name in SURFACE_VARIABLES
-        if name in variable_names
-            spectral_coefficients = getproperty(
-                prognostic_variables, name
-            )[leapfrog_step]
-            update_vector_from_spectral_coefficients!(
-                view(state, start_index:start_index + dim_spectral - 1),
-                spectral_coefficients,
-                spectral_truncation
-            )
-        end
-    end
+    map_over_spectral_coefficients_and_state_vector_slices(
+        (c, v) -> update_vector_from_spectral_coefficients!(v, c, spectral_truncation),
+        prognostic_variables,
+        state,
+        variable_names,
+        leapfrog_step
+    )
 end
 
 function update_state_vector_from_prognostic_variables!(
