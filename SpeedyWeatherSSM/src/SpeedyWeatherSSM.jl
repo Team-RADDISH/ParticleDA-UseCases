@@ -135,26 +135,23 @@ function update_spectral_coefficients_from_vector!(
     end
 end
 
-function map_over_spectral_coefficients_and_state_vector_slices(
+function map_over_state_vector_slices(
     map_function::Function,
-    prognostic_variables::SpeedyWeather.PrognosticVariables{T},
     state::AbstractVector{T},
     variable_names::Tuple,
-    leapfrog_step::Int
+    spectral_truncation::Int,
+    n_layers::Int,
 ) where {T <: AbstractFloat}
     start_index = 1
-    spectral_truncation = prognostic_variables.trunc
     dim_spectral = (spectral_truncation + 1)^2
     for name in LAYERED_VARIABLES
         if name in variable_names
-            layered_spectral_coefficients = getproperty(
-                prognostic_variables, name
-            )[leapfrog_step]
-            for layer_index in 1:prognostic_variables.nlayers
+            for layer_index in 1:n_layers
                 end_index = start_index + dim_spectral - 1
                 map_function(
-                    view(layered_spectral_coefficients, :, layer_index),
-                    view(state, start_index:end_index)
+                    view(state, start_index:end_index),
+                    name,
+                    layer_index,
                 )
                 start_index = end_index + 1
             end
@@ -163,11 +160,35 @@ function map_over_spectral_coefficients_and_state_vector_slices(
     for name in SURFACE_VARIABLES
         if name in variable_names
             map_function(
-                getproperty(prognostic_variables, name)[leapfrog_step],
                 view(state, start_index:start_index + dim_spectral - 1),
+                name,
+                nothing,
             )
         end
     end
+end
+
+function map_over_spectral_coefficients_and_state_vector_slices(
+    map_function::Function,
+    prognostic_variables::SpeedyWeather.PrognosticVariables{T},
+    state::AbstractVector{T},
+    variable_names::Tuple,
+    leapfrog_step::Int
+) where {T <: AbstractFloat}
+    function outer_map_function(state_slice, name, layer_index)
+        spectral_coefficients = getproperty(prognostic_variables, name)[leapfrog_step]
+        if !isnothing(layer_index)
+            spectral_coefficients = view(spectral_coefficients, :, layer_index)
+        end
+        map_function(spectral_coefficients, state_slice)
+    end
+    map_over_state_vector_slices(
+        outer_map_function,
+        state,
+        variable_names,
+        prognostic_variables.trunc,
+        prognostic_variables.nlayers,
+    )
 end
 
 function update_prognostic_variables_from_state_vector!(
