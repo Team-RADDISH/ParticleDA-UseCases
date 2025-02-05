@@ -19,6 +19,11 @@ function equispaced_lat_lon_grid(T, n_lat, n_lon)
     collect(reshape(reinterpret(T, lat_lon_pairs), (2, :)))
 end
 
+Base.@kwdef struct GaussianRandomFieldParameters{T<:AbstractFloat}
+    output_scale::T = 1.
+    length_scale::T = 10.
+end
+
 Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractModel}
     spectral_truncation::Int = 31
     n_layers::Int = 8
@@ -29,23 +34,36 @@ Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractM
     observed_variable::Tuple{Symbol, Symbol} = (:physics, :precip_large_scale)
     observed_coordinates::Matrix{T} = equispaced_lat_lon_grid(float_type, 6, 12)
     observation_noise_std::T = 0.1
+    # TODO: Set more sensible per variable scales
+    initial_state_grf_parameters::Dict{Symbol, GaussianRandomFieldParameters{T}} = Dict(
+
+        name => GaussianRandomFieldParameters(; output_scale=1e-6)
+        for name in (LAYERED_VARIABLES..., SURFACE_VARIABLES...)
+    )
+    state_noise_grf_parameters::Dict{Symbol, GaussianRandomFieldParameters{T}} = Dict(
+        name => GaussianRandomFieldParameters(; output_scale=1e-7)
+        for name in (LAYERED_VARIABLES..., SURFACE_VARIABLES...)
+    )
 end
 
 struct SpeedyModel{
     T<:AbstractFloat,
     G<:SpeedyWeather.AbstractSpectralGrid,
     M<:SpeedyWeather.AbstractModel,
-    I<:SpeedyWeather.RingGrids.AbstractInterpolator
+    I<:SpeedyWeather.RingGrids.AbstractInterpolator,
 }
     parameters::SpeedyParameters{T, M}
     spectral_grid::G
     model::M
     prognostic_variables::PrognosticVariables{T}
     diagnostic_variables::DiagnosticVariables{T}
+    variable_names::Tuple
     n_layered_variables::Int
     n_surface_variables::Int
     n_observed_points::Int
     observation_interpolator::I
+    initial_state_grf_scale_factors::Dict{Symbol, Vector{T}}
+    state_noise_grf_scale_factors::Dict{Symbol, Vector{T}}
 end
 
 function init(parameters::SpeedyParameters{T, M}) where {
@@ -59,6 +77,7 @@ function init(parameters::SpeedyParameters{T, M}) where {
     model.output.active = false
     simulation = initialize!(model; time=parameters.start_date)
     (; prognostic_variables, diagnostic_variables) = simulation
+    variable_names = SpeedyWeather.prognostic_variables(model)
     n_layered_variables = count(
         SpeedyWeather.has(model, var) for var in LAYERED_VARIABLES
     )
@@ -78,16 +97,35 @@ function init(parameters::SpeedyParameters{T, M}) where {
         prognostic_variables.clock, SpeedyWeather.Day(parameters.n_days)
     )
     SpeedyWeather.initialize!(prognostic_variables.clock, model.time_stepping)
+    initial_state_grf_scale_factors = Dict(
+        name => get_grf_coefficient_scale_factors(
+            parameters.initial_state_grf_parameters[name],
+            parameters.spectral_truncation,
+            model.spectral_transform.norm_sphere
+        )
+        for name in variable_names
+    )
+    state_noise_grf_scale_factors = Dict(
+        name => get_grf_coefficient_scale_factors(
+            parameters.state_noise_grf_parameters[name],
+            parameters.spectral_truncation,
+            model.spectral_transform.norm_sphere
+        )
+        for name in variable_names
+    )
     return SpeedyModel(
         parameters,
         spectral_grid,
         model,
         prognostic_variables,
         diagnostic_variables,
+        variable_names,
         n_layered_variables,
         n_surface_variables,
         n_observed_points,
-        observation_interpolator
+        observation_interpolator,
+        initial_state_grf_scale_factors,
+        state_noise_grf_scale_factors
     )
 end
 
@@ -213,14 +251,14 @@ function update_prognostic_variables_from_state_vector!(
     update_prognostic_variables_from_state_vector!(
         model.prognostic_variables,
         state,
-        SpeedyWeather.prognostic_variables(model.model);
+        model.variable_names;
         leapfrog_step=1
     )
     # Zero cofficients for second leapfrog step (corresponding to initial state)
     update_prognostic_variables_from_state_vector!(
         model.prognostic_variables,
         Zeros(ParticleDA.get_state_dimension(model)),
-        SpeedyWeather.prognostic_variables(model.model);
+        model.variable_names;
         leapfrog_step=2
     )
 end
@@ -228,14 +266,20 @@ end
 function update_vector_from_spectral_coefficients!(
     vector::AbstractVector{T},
     spectral_coefficients::AbstractVector{Complex{T}},
-    spectral_truncation::Int
+    spectral_truncation::Int;
+    increment::Bool = false
 ) where {T <: AbstractFloat}
     n_row, n_col = spectral_truncation + 2, spectral_truncation + 1
     # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
     # last row (degree = l = n_row - 1) as used only for computing meridional derivative
     # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
     # skipping zero upper-triangular entries
-    vector[1:n_row - 1] .= real(spectral_coefficients[1:n_row - 1])
+    # TODO: Figure out how to do this without repetition here and below
+    if increment
+        vector[1:n_row - 1] .+= real(spectral_coefficients[1:n_row - 1])
+    else
+        vector[1:n_row - 1] .= real(spectral_coefficients[1:n_row - 1])
+    end
     # vector index is i, spectral coefficient (flat) index is j
     i = n_row - 1
     j = n_row
@@ -246,9 +290,15 @@ function update_vector_from_spectral_coefficients!(
         slice_size = n_row - col_index
         # Reinterpret complex valued spectral coefficients to extract both real and
         # imaginary components
-        vector[i + 1:i + 2 * slice_size] .= reinterpret(
-            T, spectral_coefficients[j + 1:j + slice_size]
-        )
+        if increment
+            vector[i + 1:i + 2 * slice_size] .+= reinterpret(
+                T, spectral_coefficients[j + 1:j + slice_size]
+            )
+        else
+            vector[i + 1:i + 2 * slice_size] .= reinterpret(
+                T, spectral_coefficients[j + 1:j + slice_size]
+            )
+        end
         # Update vector and spectral coefficient indices, adding 1 offset
         # to latter to skip entries corresponding to last row
         i = i + 2 * slice_size
@@ -278,7 +328,7 @@ function update_state_vector_from_prognostic_variables!(
     update_state_vector_from_prognostic_variables!(
         state,
         model.prognostic_variables,
-        SpeedyWeather.prognostic_variables(model.model)
+        model.variable_names
     )
 end
 
@@ -311,6 +361,75 @@ function update_prognostic_and_diagnostic_variables_from_state_vector!(
     )
 end
 
+function add_noise_to_state_vector!(
+    state::AbstractVector{T},
+    spectral_truncation::Int,
+    n_layers::Int,
+    variable_names::Tuple,
+    grf_scale_factors::Dict{Symbol, Vector{T}},
+    rng::AbstractRNG
+) where {T <: AbstractFloat}
+    n_row, n_col = spectral_truncation + 2, spectral_truncation + 1
+    spectral_coefficients = SpeedyWeather.LowerTriangularMatrix{Complex{T}}(
+        undef, n_row, n_col
+    )
+    function map_function(state_slice, name, layer_index)
+        generate_random_spectral_coefficients!(
+            spectral_coefficients,
+            spectral_truncation,
+            grf_scale_factors[name],
+            rng
+        )
+        update_vector_from_spectral_coefficients!(
+            state_slice, spectral_coefficients, spectral_truncation; increment=true
+        )
+    end
+    map_over_state_vector_slices(
+        map_function,
+        state,
+        variable_names,
+        spectral_truncation,
+        n_layers,
+    )
+end
+
+function get_grf_coefficient_scale_factors(
+    parameters::GaussianRandomFieldParameters{T},
+    spectral_truncation::Int,
+    norm_sphere::T
+) where {T <: AbstractFloat}
+    ell_max = spectral_truncation + 2
+    scale_factors = zeros(T, ell_max)
+    denominator = 2 * sum(
+        [
+            (2 * ell + 1) * exp(-ell * (ell + 1) / parameters.length_scale^2)
+            for ell in 1:spectral_truncation
+        ]
+    )
+    common_scale = norm_sphere * sqrt(2 * parameters.output_scale^2 / denominator)
+    for ell in 2:ell_max
+        scale_factors[ell] = common_scale * exp(
+            -ell * (ell - 1) / (2 * parameters.length_scale^2)
+        )
+    end
+    return scale_factors
+end
+
+function generate_random_spectral_coefficients!(
+    spectral_coefficients::AbstractVector{Complex{T}},
+    spectral_truncation::Int,
+    scale_factors::AbstractVector{T},
+    rng::AbstractRNG
+) where {T <: AbstractFloat}
+    ell_m = 0
+    @inbounds for m in 1:spectral_truncation + 1
+        for ell in m:spectral_truncation + 2
+            ell_m += 1
+            spectral_coefficients[ell_m] = scale_factors[ell] * randn(rng, Complex{T})
+        end
+    end
+end
+
 ParticleDA.get_state_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
 
 ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat} = T
@@ -323,6 +442,14 @@ function ParticleDA.sample_initial_state!(
         model.prognostic_variables, initial_conditions, model.model
     )
     update_state_vector_from_prognostic_variables!(state, model)
+    add_noise_to_state_vector!(
+        state,
+        model.parameters.spectral_truncation,
+        model.parameters.n_layers,
+        model.variable_names,
+        model.initial_state_grf_scale_factors,
+        rng
+    )
 end
 
 function ParticleDA.update_state_deterministic!(
@@ -339,7 +466,14 @@ end
 function ParticleDA.update_state_stochastic!(    
     state::AbstractVector{T}, model::SpeedyModel{T}, rng::G, task_index::Int=1
 ) where {T<:AbstractFloat, G<:AbstractRNG}
-
+    add_noise_to_state_vector!(
+        state,
+        model.parameters.spectral_truncation,
+        model.parameters.n_layers,
+        model.variable_names,
+        model.state_noise_grf_scale_factors,
+        rng
+    )
 end
 
 function ParticleDA.get_observation_mean_given_state!(
@@ -395,7 +529,15 @@ function ParticleDA.write_model_metadata(file::HDF5.File, model::SpeedyModel)
             isa(value, Type) && (value = string(nameof(value)))
             isa(value, Tuple{Symbol, Symbol}) && (value = join(map(String, value), "."))
             isa(value, DateTime) && (value = string(value))
-            HDF5.attributes(group)[string(field)] = value
+            if isa(value, Dict)
+                subgroup = create_group(group, string(field))
+                for (key, val) in value
+                    # TODO: Write struct val in a nicer way
+                    HDF5.attributes(subgroup)[string(key)] = string(val)
+                end
+            else
+                HDF5.attributes(group)[string(field)] = value
+            end
         end
     else
         @warn "Write failed, group $group_name already exists in  $(file.filename)!"
