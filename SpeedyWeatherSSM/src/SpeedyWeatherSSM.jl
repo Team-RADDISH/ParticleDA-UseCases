@@ -21,7 +21,7 @@ end
 
 Base.@kwdef struct GaussianRandomFieldParameters{T<:AbstractFloat}
     output_scale::T = 1.
-    length_scale::T = 1.
+    length_scale::T = 0.1
 end
 
 Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractModel}
@@ -393,19 +393,15 @@ function get_grf_coefficient_scale_factors(
     spectral_truncation::Int,
     norm_sphere::T
 ) where {T <: AbstractFloat}
-    ell_max = spectral_truncation + 2
-    scale_factors = zeros(T, ell_max)
-    denominator = 2 * sum(
-        [
-            (2 * ell + 1) * exp(-ell * (ell + 1) / parameters.length_scale^2)
-            for ell in 1:spectral_truncation
-        ]
-    )
-    common_scale = norm_sphere * sqrt(2 * parameters.output_scale^2 / denominator)
-    for ell in 2:ell_max
-        scale_factors[ell] = common_scale * exp(
-            -ell * (ell - 1) / (2 * parameters.length_scale^2)
-        )
+    el_max = spectral_truncation + 1
+    (; output_scale, length_scale) = parameters
+    norm_factor = norm_sphere * output_scale / sqrt(
+        sum((2 * el + 1) * exp(-2 * length_scale^2 * el * (el + 1)) for el in 1:el_max)
+    ) 
+    scale_factors = zeros(T, el_max)
+    # el = 1 case corresponds to mean - assume zero-mean
+    for el in 2:el_max
+        scale_factors[el] = norm_factor * exp(-length_scale^2 * el * (el + 1))
     end
     return scale_factors
 end
@@ -416,11 +412,13 @@ function generate_random_spectral_coefficients!(
     scale_factors::AbstractVector{T},
     rng::AbstractRNG
 ) where {T <: AbstractFloat}
-    ell_m = 0
+    el_m = 0
     @inbounds for m in 1:spectral_truncation + 1
-        for ell in m:spectral_truncation + 2
-            ell_m += 1
-            spectral_coefficients[ell_m] = scale_factors[ell] * randn(rng, Complex{T})
+        for el in m:spectral_truncation + 2
+            el_m += 1
+            # Don't generate coefficients in last row (used only for meridional deriv.)
+            (el == spectral_truncation + 2) && continue 
+            spectral_coefficients[el_m] = scale_factors[el] * randn(rng, Complex{T})
         end
     end
 end
