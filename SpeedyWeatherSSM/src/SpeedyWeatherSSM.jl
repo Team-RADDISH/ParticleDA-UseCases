@@ -21,7 +21,7 @@ end
 
 Base.@kwdef struct GaussianRandomFieldParameters{T<:AbstractFloat}
     output_scale::T = 1.
-    length_scale::T = 10.
+    length_scale::T = 1.
 end
 
 Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractModel}
@@ -34,15 +34,19 @@ Base.@kwdef struct SpeedyParameters{T<:AbstractFloat, M<:SpeedyWeather.AbstractM
     observed_variable::Tuple{Symbol, Symbol} = (:physics, :precip_large_scale)
     observed_coordinates::Matrix{T} = equispaced_lat_lon_grid(float_type, 6, 12)
     observation_noise_std::T = 0.1
-    # TODO: Set more sensible per variable scales
     initial_state_grf_parameters::Dict{Symbol, GaussianRandomFieldParameters{T}} = Dict(
-
-        name => GaussianRandomFieldParameters(; output_scale=1e-6)
-        for name in (LAYERED_VARIABLES..., SURFACE_VARIABLES...)
+        :vor => GaussianRandomFieldParameters(; output_scale=5e-7),
+        :div => GaussianRandomFieldParameters(; output_scale=5e-7),
+        :temp => GaussianRandomFieldParameters(; output_scale=2e0),
+        :humid => GaussianRandomFieldParameters(; output_scale=1e-5),
+        :pres => GaussianRandomFieldParameters(; output_scale=2e-3),
     )
     state_noise_grf_parameters::Dict{Symbol, GaussianRandomFieldParameters{T}} = Dict(
-        name => GaussianRandomFieldParameters(; output_scale=1e-7)
-        for name in (LAYERED_VARIABLES..., SURFACE_VARIABLES...)
+        :vor => GaussianRandomFieldParameters(; output_scale=5e-8),
+        :div => GaussianRandomFieldParameters(; output_scale=5e-8),
+        :temp => GaussianRandomFieldParameters(; output_scale=2e-1),
+        :humid => GaussianRandomFieldParameters(; output_scale=1e-6),
+        :pres => GaussianRandomFieldParameters(; output_scale=2e-4),
     )
 end
 
