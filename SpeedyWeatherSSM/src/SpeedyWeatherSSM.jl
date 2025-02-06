@@ -524,28 +524,47 @@ function ParticleDA.get_log_density_observation_given_state(
 
 end
 
-function ParticleDA.write_model_metadata(file::HDF5.File, model::SpeedyModel)
-    group_name = "parameters"
-    if !haskey(file, group_name)
-        group = create_group(file, group_name)
-        for field in fieldnames(typeof(model.parameters))
-            value = getfield(model.parameters, field)
-            isa(value, Type) && (value = string(nameof(value)))
-            isa(value, Tuple{Symbol, Symbol}) && (value = join(map(String, value), "."))
-            isa(value, DateTime) && (value = string(value))
-            if isa(value, Dict)
-                subgroup = create_group(group, string(field))
-                for (key, val) in value
-                    # TODO: Write struct val in a nicer way
-                    HDF5.attributes(subgroup)[string(key)] = string(val)
-                end
-            else
-                HDF5.attributes(group)[string(field)] = value
-            end
-        end
-    else
-        @warn "Write failed, group $group_name already exists in  $(file.filename)!"
+const HDF5FileOrGroup = Union{HDF5.File, HDF5.Group}
+
+function write!(
+    group::HDF5FileOrGroup, key::String, value::Union{Number, String, Array}
+)
+    attributes(group)[key] = value
+end
+
+function write!(group::HDF5FileOrGroup, key::String, value::Union{Symbol, DateTime})
+    attributes(group)[key] = string(value)
+end
+
+function write!(group::HDF5FileOrGroup, key::String, value::Type)
+    attributes(group)[key] = string(nameof(value))
+end
+
+function write!(
+    group::HDF5FileOrGroup, key::String, value::NTuple{N, T}
+) where {N, T <: Union{Number, String, Symbol, Type}}
+    subgroup = create_group(group, key)
+    for (index, val) in enumerate(value)
+        write!(subgroup, string(index), val)
     end
+end
+
+function write!(group::HDF5FileOrGroup, key::String, value::Dict)
+    subgroup = create_group(group, key)
+    for (k, v) in value
+        write!(subgroup, string(k), v)
+    end
+end
+
+function write!(group::HDF5FileOrGroup, key::String, value)
+    subgroup = create_group(group, key)
+    for name in fieldnames(typeof(value))
+        write!(subgroup, string(name), getfield(value, name))
+    end
+end
+
+function ParticleDA.write_model_metadata(file::HDF5.File, model::SpeedyModel)
+    write!(file, "parameters", model.parameters)
 end
 
 end
