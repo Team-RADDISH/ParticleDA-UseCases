@@ -258,7 +258,7 @@ function update_prognostic_variables_from_state_vector!(
         model.variable_names;
         leapfrog_step=1
     )
-    # Zero cofficients for second leapfrog step (corresponding to initial state)
+    # Zero coefficients for second leapfrog step (corresponding to initial state)
     update_prognostic_variables_from_state_vector!(
         model.prognostic_variables,
         Zeros(ParticleDA.get_state_dimension(model)),
@@ -336,7 +336,7 @@ function update_state_vector_from_prognostic_variables!(
     )
 end
 
-function update_clock_from_time_index!(clock::SpeedyWeather.Clock,time_index::Int)
+function update_clock_from_time_index!(clock::SpeedyWeather.Clock, time_index::Int)
     clock.time = clock.start + clock.n_timesteps * clock.Δt * (time_index - 1)
     clock.timestep_counter = clock.n_timesteps * (time_index - 1)
 end
