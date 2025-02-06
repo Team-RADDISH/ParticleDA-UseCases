@@ -274,16 +274,12 @@ function update_vector_from_spectral_coefficients!(
     increment::Bool = false
 ) where {T <: AbstractFloat}
     n_row, n_col = spectral_truncation + 2, spectral_truncation + 1
+    update! = increment ? (lhs, rhs) -> (lhs .+= rhs) : (lhs, rhs) -> (lhs .= rhs)
     # First column of spectral_coefficients (order = m = 0) are real-valued and we skip
     # last row (degree = l = n_row - 1) as used only for computing meridional derivative
     # for vector valued fields. LowerTriangularMatrix allows vector (flat) indexing
     # skipping zero upper-triangular entries
-    # TODO: Figure out how to do this without repetition here and below
-    if increment
-        vector[1:n_row - 1] .+= real(spectral_coefficients[1:n_row - 1])
-    else
-        vector[1:n_row - 1] .= real(spectral_coefficients[1:n_row - 1])
-    end
+    @views update!(vector[1:n_row - 1], real(spectral_coefficients[1:n_row - 1]))
     # vector index is i, spectral coefficient (flat) index is j
     i = n_row - 1
     j = n_row
@@ -294,15 +290,10 @@ function update_vector_from_spectral_coefficients!(
         slice_size = n_row - col_index
         # Reinterpret complex valued spectral coefficients to extract both real and
         # imaginary components
-        if increment
-            vector[i + 1:i + 2 * slice_size] .+= reinterpret(
-                T, spectral_coefficients[j + 1:j + slice_size]
-            )
-        else
-            vector[i + 1:i + 2 * slice_size] .= reinterpret(
-                T, spectral_coefficients[j + 1:j + slice_size]
-            )
-        end
+        @views update!(
+            vector[i + 1:i + 2 * slice_size], 
+            reinterpret(T, spectral_coefficients[j + 1:j + slice_size])
+        )
         # Update vector and spectral coefficient indices, adding 1 offset
         # to latter to skip entries corresponding to last row
         i = i + 2 * slice_size
