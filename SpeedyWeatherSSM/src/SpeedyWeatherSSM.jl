@@ -55,12 +55,14 @@ struct SpeedyModel{
     G<:SpeedyWeather.AbstractSpectralGrid,
     M<:SpeedyWeather.AbstractModel,
     I<:SpeedyWeather.RingGrids.AbstractInterpolator,
+    P<:SpeedyWeather.AbstractPrognosticVariables,
+    D<:SpeedyWeather.AbstractDiagnosticVariables
 }
     parameters::SpeedyParameters{T, M}
     spectral_grid::G
     model::M
-    prognostic_variables::PrognosticVariables{T}
-    diagnostic_variables::DiagnosticVariables{T}
+    prognostic_variables::Vector{P}
+    diagnostic_variables::Vector{D}
     variable_names::Tuple
     n_layered_variables::Int
     n_surface_variables::Int
@@ -70,7 +72,7 @@ struct SpeedyModel{
     state_noise_grf_scale_factors::Dict{Symbol, Vector{T}}
 end
 
-function init(parameters::SpeedyParameters{T, M}) where {
+function init(parameters::SpeedyParameters{T, M}, n_tasks::Int=1) where {
     T<:AbstractFloat, M<:SpeedyWeather.AbstractModel
 }
     spectral_grid = SpectralGrid(;
@@ -81,6 +83,21 @@ function init(parameters::SpeedyParameters{T, M}) where {
     model.output.active = false
     simulation = initialize!(model; time=parameters.start_date)
     (; prognostic_variables, diagnostic_variables) = simulation
+    SpeedyWeather.set_period!(
+        prognostic_variables.clock, SpeedyWeather.Day(parameters.n_days)
+    )
+    SpeedyWeather.initialize!(prognostic_variables.clock, model.time_stepping)
+    # We need separate copies of prognostic and diagnostic variables for each task to
+    # allow independent parallel read-write access
+    per_task_prognostic_variables = Vector{typeof(prognostic_variables)}(undef, n_tasks)
+    per_task_diagnostic_variables = Vector{typeof(diagnostic_variables)}(undef, n_tasks)
+    per_task_prognostic_variables[1] = prognostic_variables
+    per_task_diagnostic_variables[1] = diagnostic_variables
+    for t in 2:n_tasks
+        per_task_prognostic_variables[t] = PrognosticVariables(spectral_grid, model)
+        copy!(per_task_prognostic_variables[t], prognostic_variables)
+        per_task_diagnostic_variables[t] = DiagnosticVariables(spectral_grid)
+    end
     variable_names = SpeedyWeather.prognostic_variables(model)
     n_layered_variables = count(
         SpeedyWeather.has(model, var) for var in LAYERED_VARIABLES
@@ -97,10 +114,6 @@ function init(parameters::SpeedyParameters{T, M}) where {
         parameters.observed_coordinates[1, :],
         parameters.observed_coordinates[2, :]
     )
-    SpeedyWeather.set_period!(
-        prognostic_variables.clock, SpeedyWeather.Day(parameters.n_days)
-    )
-    SpeedyWeather.initialize!(prognostic_variables.clock, model.time_stepping)
     initial_state_grf_scale_factors = Dict(
         name => get_grf_coefficient_scale_factors(
             parameters.initial_state_grf_parameters[name],
@@ -121,8 +134,8 @@ function init(parameters::SpeedyParameters{T, M}) where {
         parameters,
         spectral_grid,
         model,
-        prognostic_variables,
-        diagnostic_variables,
+        per_task_prognostic_variables,
+        per_task_diagnostic_variables,
         variable_names,
         n_layered_variables,
         n_surface_variables,
@@ -250,17 +263,17 @@ function update_prognostic_variables_from_state_vector!(
 end
 
 function update_prognostic_variables_from_state_vector!(
-    model::SpeedyModel{T}, state::AbstractVector{T}
+    model::SpeedyModel{T}, state::AbstractVector{T}, task_index::Int
 ) where {T <: AbstractFloat}
     update_prognostic_variables_from_state_vector!(
-        model.prognostic_variables,
+        model.prognostic_variables[task_index],
         state,
         model.variable_names;
         leapfrog_step=1
     )
     # Zero coefficients for second leapfrog step (corresponding to initial state)
     update_prognostic_variables_from_state_vector!(
-        model.prognostic_variables,
+        model.prognostic_variables[task_index],
         Zeros(ParticleDA.get_state_dimension(model)),
         model.variable_names;
         leapfrog_step=2
@@ -318,11 +331,11 @@ function update_state_vector_from_prognostic_variables!(
 end
 
 function update_state_vector_from_prognostic_variables!(
-    state::AbstractVector{T}, model::SpeedyModel{T}
+    state::AbstractVector{T}, model::SpeedyModel{T}, task_index::Int
 ) where {T <: AbstractFloat}
     update_state_vector_from_prognostic_variables!(
         state,
-        model.prognostic_variables,
+        model.prognostic_variables[task_index],
         model.variable_names
     )
 end
@@ -332,8 +345,12 @@ function update_clock_from_time_index!(clock::SpeedyWeather.Clock, time_index::I
     clock.timestep_counter = clock.n_timesteps * (time_index - 1)
 end
 
-function update_clock_from_time_index!(model::SpeedyModel, time_index::Int)
-    update_clock_from_time_index!(model.prognostic_variables.clock, time_index)
+function update_clock_from_time_index!(
+    model::SpeedyModel, time_index::Int, task_index::Int
+)
+    update_clock_from_time_index!(
+        model.prognostic_variables[task_index].clock, time_index
+    )
 end
 
 function get_observed_variable_field(
@@ -344,12 +361,12 @@ function get_observed_variable_field(
 end
 
 function update_prognostic_and_diagnostic_variables_from_state_vector!(
-    model::SpeedyModel{T}, state::AbstractVector{T}
+    model::SpeedyModel{T}, state::AbstractVector{T}, task_index::Int
 ) where {T <: AbstractFloat}
-    update_prognostic_variables_from_state_vector!(model, state)
+    update_prognostic_variables_from_state_vector!(model, state, task_index)
     SpeedyWeather.transform!(
-        model.diagnostic_variables,
-        model.prognostic_variables,
+        model.diagnostic_variables[task_index],
+        model.prognostic_variables[task_index],
         1,
         model.model,
         initialize=true
@@ -430,11 +447,12 @@ ParticleDA.get_observation_eltype(model::SpeedyModel{T}) where {T<:AbstractFloat
 function ParticleDA.sample_initial_state!(
     state::AbstractVector{T}, model::SpeedyModel{T}, rng::R, task_index::Int=1
 ) where {T<:AbstractFloat, R<:AbstractRNG}
-    initial_conditions = model.model.initial_conditions
     SpeedyWeather.initialize!(
-        model.prognostic_variables, initial_conditions, model.model
+        model.prognostic_variables[task_index],
+        model.model.initial_conditions,
+        model.model
     )
-    update_state_vector_from_prognostic_variables!(state, model)
+    update_state_vector_from_prognostic_variables!(state, model, task_index)
     add_noise_to_state_vector!(
         state,
         model.parameters.spectral_truncation,
@@ -448,12 +466,14 @@ end
 function ParticleDA.update_state_deterministic!(
     state::AbstractVector{T}, model::SpeedyModel{T}, time_index::Int, task_index::Int=1
 ) where {T<:AbstractFloat}
-    update_prognostic_variables_from_state_vector!(model, state)
-    update_clock_from_time_index!(model, time_index)
+    update_prognostic_variables_from_state_vector!(model, state, task_index)
+    update_clock_from_time_index!(model, time_index, task_index)
     SpeedyWeather.time_stepping!(
-        model.prognostic_variables, model.diagnostic_variables, model.model
+        model.prognostic_variables[task_index],
+        model.diagnostic_variables[task_index],
+        model.model
     )
-    update_state_vector_from_prognostic_variables!(state, model)
+    update_state_vector_from_prognostic_variables!(state, model, task_index)
 end
 
 function ParticleDA.update_state_stochastic!(    
@@ -475,8 +495,12 @@ function ParticleDA.get_observation_mean_given_state!(
     model::SpeedyModel{T},
     task_index::Int=1
 ) where {T<:AbstractFloat}
-    update_prognostic_and_diagnostic_variables_from_state_vector!(model, state)
-    observed_field_grid = get_observed_variable_field(model.diagnostic_variables, model)
+    update_prognostic_and_diagnostic_variables_from_state_vector!(
+        model, state, task_index
+    )
+    observed_field_grid = get_observed_variable_field(
+        model.diagnostic_variables[task_index], model
+    )
     SpeedyWeather.interpolate!(
         observation_mean, observed_field_grid, model.observation_interpolator
     )
